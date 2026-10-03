@@ -69,9 +69,9 @@ class StatisticsUiTest {
         show(emptyList())
         compose.onNodeWithTag("stat-expense").assertTextContains("¥ 0.00")
         compose.onNodeWithTag("income-expense-chart").assertDoesNotExist()
-        compose.onNodeWithText("本期暂无支出，不计算占比。").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("暂无支出").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("收入占比").performScrollTo().performClick()
-        compose.onNodeWithText("本期暂无收入，不计算占比。").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("暂无收入").performScrollTo().assertIsDisplayed()
     }
 
     private fun samples(): List<LedgerRow> = listOf(

@@ -1,6 +1,10 @@
 package com.spsir.ledger
 
 import android.app.Application
+import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -19,6 +23,9 @@ data class LedgerState(
     val rows: List<LedgerRow> = emptyList(),
     val saving: Boolean = false,
     val error: String? = null,
+    val hiddenCategories: Set<String> = emptySet(),
+    val backupPreview: LedgerBackup? = null,
+    val message: String? = null,
 )
 
 data class EntryDraft(
@@ -67,6 +74,7 @@ fun expenseTotal(rows: List<LedgerRow>): Long = rows.filter { it.entry.kind == "
 class LedgerViewModel(application: Application) : AndroidViewModel(application) {
     private val db = LedgerDatabase.open(application)
     private val repository = LedgerRepository(db.dao())
+    private val backups = BackupStore(db, File(application.filesDir, "before-restore.json"))
     private val mutableState = MutableStateFlow(LedgerState())
     val state = mutableState.asStateFlow()
 
@@ -74,15 +82,13 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 db.dao().seed(presetCategories())
-                combine(db.dao().categories(), db.dao().events(), db.dao().rows()) { categories, events, rows ->
-                    Triple(categories, events, rows)
-                }.collect { (categories, events, rows) ->
-                    mutableState.update { it.copy(loading = false, categories = categories, events = events, rows = rows) }
-                }
+                combine(db.dao().categories(), db.dao().events(), db.dao().rows(), db.dao().hiddenCategories()) { categories, events, rows, hidden ->
+                    mutableState.update { it.copy(loading = false, categories = categories, events = events, rows = rows, hiddenCategories = hidden.map { h -> h.categoryId }.toSet()) }
+                }.collect {}
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                mutableState.update { it.copy(loading = false, error = "账本读取失败，请关闭后重试；原数据不会被清空。") }
+                mutableState.update { it.copy(loading = false, error = "读取失败，请重启应用。") }
             }
         }
     }
@@ -91,10 +97,56 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     fun save(draft: EntryDraft, done: () -> Unit) = mutate(done) { repository.save(draft) }
     fun createEvent(name: String, done: () -> Unit) = mutate(done) { repository.createEvent(name) }
     fun delete(id: String, done: () -> Unit) = mutate(done) { db.dao().deleteEntry(id) }
+    fun setCategoryHidden(id: String, hidden: Boolean) = mutate({}) {
+        require(db.dao().category(id)?.kind == "expense") { "请选择支出分类" }
+        if (hidden) db.dao().hide(HiddenCategory(id)) else db.dao().showCategory(id)
+    }
+
+    fun dismissBackup() { if (!state.value.saving) mutableState.update { it.copy(backupPreview = null, error = null) } }
+    fun clearMessage() = mutableState.update { it.copy(message = null) }
+
+    fun exportBackup(uri: Uri, safety: Boolean = false) = mutate({}) {
+        withContext(Dispatchers.IO) {
+            val data = if (safety) backups.readSafety() else backups.snapshot()
+            val resolver = getApplication<Application>().contentResolver
+            requireNotNull(resolver.openOutputStream(uri, "wt")) { "无法打开保存位置" }.bufferedWriter(Charsets.UTF_8).use { it.write(BackupJson.encode(data)) }
+        }
+        mutableState.update { it.copy(message = "备份已导出") }
+    }
+
+    fun inspectBackup(uri: Uri) = mutate({}) {
+        val data = withContext(Dispatchers.IO) {
+            val resolver = getApplication<Application>().contentResolver
+            requireNotNull(resolver.openInputStream(uri)) { "无法读取文件" }.use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var count = input.read(buffer)
+                while (count != -1) {
+                    require(output.size() + count <= 20 * 1024 * 1024) { "备份超过 20 MB，请使用较小文件" }
+                    output.write(buffer, 0, count)
+                    count = input.read(buffer)
+                }
+                val bytes = output.toByteArray()
+                require(bytes.size <= 20 * 1024 * 1024) { "备份超过 20 MB，请使用较小文件" }
+                BackupJson.decode(bytes.toString(Charsets.UTF_8))
+            }
+        }
+        mutableState.update { it.copy(backupPreview = data) }
+    }
+
+    fun inspectSafety() = mutate({}) {
+        val data = withContext(Dispatchers.IO) { backups.readSafety() }
+        mutableState.update { it.copy(backupPreview = data) }
+    }
+
+    fun restoreBackup() {
+        val data = state.value.backupPreview ?: return
+        mutate({ mutableState.update { it.copy(backupPreview = null, message = "账本已恢复") } }) { backups.restore(data) }
+    }
 
     private fun mutate(done: () -> Unit, action: suspend () -> Unit) {
         if (state.value.saving) return
-        mutableState.update { it.copy(saving = true, error = null) }
+        mutableState.update { it.copy(saving = true, error = null, message = null) }
         viewModelScope.launch {
             try {
                 action()
@@ -104,7 +156,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: IllegalArgumentException) {
                 mutableState.update { it.copy(error = e.message) }
             } catch (_: Exception) {
-                mutableState.update { it.copy(error = "保存失败，请重试。输入内容已保留。") }
+                mutableState.update { it.copy(error = "操作失败，请检查文件或保存位置。") }
             } finally {
                 mutableState.update { it.copy(saving = false) }
             }

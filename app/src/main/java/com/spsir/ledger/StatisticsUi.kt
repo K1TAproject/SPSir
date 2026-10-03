@@ -50,7 +50,7 @@ fun StatisticsPanel(rows: List<LedgerRow>, categories: List<Category>) {
         Text(if (range.start == range.end) range.start.toString() else "${range.start} ～ ${range.end}",
             style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("stat-range"))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(if (period == StatPeriod.WEEK) "自然周 · 周一至周日" else "按记账日期统计 · 人民币", style = MaterialTheme.typography.bodySmall)
+            if (period == StatPeriod.WEEK) Text("周一至周日", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { anchorText = LocalDate.now().toString() }, contentPadding = PaddingValues(0.dp)) { Text("回到本${period.label}") }
         }
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)) {
@@ -61,12 +61,11 @@ fun StatisticsPanel(rows: List<LedgerRow>, categories: List<Category>) {
                     TotalAmount("收入", totals.income, Modifier.weight(1f).testTag("stat-income"))
                     TotalAmount("收支差额", totals.net, Modifier.weight(1f).testTag("stat-net"))
                 }
-                Text("${selectedRows.size} 笔记录 · 收支差额不是账户余额", style = MaterialTheme.typography.bodySmall)
+                Text("${selectedRows.size} 笔记录", style = MaterialTheme.typography.bodySmall)
             }
         }
         IncomeExpenseChart(buckets, period)
         key(period, range) { CategoryBreakdown(selectedRows, categories) }
-        Text("事件支出包含在全部统计中，只计算一次。外币使用手动填写的人民币金额；没有记录的日期按 0 展示。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 
     if (pickingDate) {
@@ -77,7 +76,6 @@ fun StatisticsPanel(rows: List<LedgerRow>, categories: List<Category>) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(input, { input = it; error = null }, label = { Text("日期（YYYY-MM-DD）") },
                         singleLine = true, modifier = Modifier.testTag("stat-date-input"))
-                    Text("周、月、年视图会展示该日期所在的完整周期。")
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
@@ -116,9 +114,9 @@ private fun IncomeExpenseChart(buckets: List<TrendBucket>, period: StatPeriod) {
                 Legend("支出", expenseColor)
                 Legend("收入", incomeColor)
             }
-            Text("单位：元 · 最高 ${Money.format(max)}", style = MaterialTheme.typography.bodySmall)
+            Text("最高 ¥ ${Money.format(max)}", style = MaterialTheme.typography.bodySmall)
             if (max == 0L) {
-                Text("本期没有收支记录", modifier = Modifier.padding(vertical = 24.dp))
+                Text("暂无记录", modifier = Modifier.padding(vertical = 24.dp))
             } else {
                 Canvas(Modifier.fillMaxWidth().height(170.dp).testTag("income-expense-chart")
                     .semantics { contentDescription = "收支柱状图：左柱支出，右柱收入；点击柱组查看金额，下方可展开全部明细。" }
@@ -184,9 +182,9 @@ fun CategoryBreakdown(rows: List<LedgerRow>, categories: List<Category>, allowIn
         }
         if (parent != null) {
             TextButton(onClick = { parentId = null }) { Text("返回全部类别") }
-            Text("${parent.name} · 占该类别${if (kind == "expense") "支出" else "收入"}的比例")
-        } else Text("占本期${if (kind == "expense") "支出" else "收入"}的比例 · 点大类查看细分", style = MaterialTheme.typography.bodySmall)
-        if (slices.isEmpty()) Text("本期暂无${if (kind == "expense") "支出" else "收入"}，不计算占比。", modifier = Modifier.padding(vertical = 12.dp))
+            Text("${parent.name} · 类内占比")
+        }
+        if (slices.isEmpty()) Text("暂无${if (kind == "expense") "支出" else "收入"}", modifier = Modifier.padding(vertical = 12.dp))
         slices.forEach { slice ->
             val hasChildren = parentId == null && categories.any { it.parentId == slice.id }
             OutlinedCard(onClick = { if (hasChildren) parentId = slice.id }, enabled = hasChildren,
@@ -198,7 +196,7 @@ fun CategoryBreakdown(rows: List<LedgerRow>, categories: List<Category>, allowIn
                         Text(sharePercent(slice.amount, total))
                     }
                     LinearProgressIndicator(progress = { if (total == 0L) 0f else (slice.amount.toDouble() / total).toFloat() }, modifier = Modifier.fillMaxWidth())
-                    Text("¥ ${Money.format(slice.amount)}${if (hasChildren) " · 查看细分 ›" else ""}", style = MaterialTheme.typography.bodySmall)
+                    Text("¥ ${Money.format(slice.amount)}${if (hasChildren) "  ›" else ""}", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

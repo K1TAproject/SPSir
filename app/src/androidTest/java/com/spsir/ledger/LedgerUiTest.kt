@@ -29,7 +29,7 @@ class LedgerUiTest {
         compose.onNodeWithText("CNY · 人民币").performClick()
         compose.onNodeWithText("NOK · 挪威克朗").performClick()
         compose.onNodeWithText("原币金额（NOK）").performTextInput("120")
-        compose.onNodeWithText("人民币金额（手动填写）").performTextInput("81.23")
+        compose.onNodeWithText("人民币金额").performTextInput("81.23")
         compose.onNodeWithText("保存", substring = false).performClick()
         compose.runOnIdle {
             assertNotNull(saved)

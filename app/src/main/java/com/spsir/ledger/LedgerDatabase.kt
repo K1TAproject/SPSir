@@ -2,6 +2,8 @@ package com.spsir.ledger
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "categories")
@@ -18,6 +20,9 @@ data class LedgerEvent(
     @PrimaryKey val id: String,
     val name: String,
 )
+
+@Entity(tableName = "hidden_categories")
+data class HiddenCategory(@PrimaryKey val categoryId: String)
 
 @Entity(
     tableName = "entries",
@@ -48,6 +53,44 @@ data class LedgerRow(
 
 @Dao
 interface LedgerDao {
+    @Query("SELECT * FROM hidden_categories ORDER BY categoryId")
+    fun hiddenCategories(): Flow<List<HiddenCategory>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun hide(category: HiddenCategory)
+
+    @Query("DELETE FROM hidden_categories WHERE categoryId = :id")
+    suspend fun showCategory(id: String)
+
+    @Query("SELECT * FROM categories ORDER BY sortOrder, id")
+    suspend fun allCategories(): List<Category>
+
+    @Query("SELECT * FROM events ORDER BY rowid")
+    suspend fun allEvents(): List<LedgerEvent>
+
+    @Query("SELECT * FROM entries ORDER BY rowid")
+    suspend fun allEntries(): List<LedgerEntry>
+
+    @Query("SELECT * FROM hidden_categories ORDER BY categoryId")
+    suspend fun allHidden(): List<HiddenCategory>
+
+    @Query("DELETE FROM entries")
+    suspend fun clearEntries()
+
+    @Query("DELETE FROM events")
+    suspend fun clearEvents()
+
+    @Query("DELETE FROM hidden_categories")
+    suspend fun clearHidden()
+
+    @Query("DELETE FROM categories")
+    suspend fun clearCategories()
+
+    @Insert
+    suspend fun insertEntries(entries: List<LedgerEntry>)
+
+    @Insert
+    suspend fun insertEvents(events: List<LedgerEvent>)
     @Query("SELECT * FROM categories ORDER BY sortOrder, id")
     fun categories(): Flow<List<Category>>
 
@@ -83,13 +126,19 @@ interface LedgerDao {
     suspend fun deleteEntry(id: String)
 }
 
-@Database(entities = [Category::class, LedgerEvent::class, LedgerEntry::class], version = 1, exportSchema = true)
+@Database(entities = [Category::class, LedgerEvent::class, LedgerEntry::class, HiddenCategory::class], version = 2, exportSchema = true)
 abstract class LedgerDatabase : RoomDatabase() {
     abstract fun dao(): LedgerDao
 
     companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS hidden_categories (categoryId TEXT NOT NULL PRIMARY KEY)")
+            }
+        }
         fun open(context: Context, name: String = "ledger.db"): LedgerDatabase =
-            Room.databaseBuilder(context.applicationContext, LedgerDatabase::class.java, name).build()
+            Room.databaseBuilder(context.applicationContext, LedgerDatabase::class.java, name)
+                .addMigrations(MIGRATION_1_2).build()
     }
 }
 

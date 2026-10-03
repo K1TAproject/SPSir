@@ -1,4 +1,5 @@
 .gradle/
+.serena/
 .kotlin/
 .codegraph/
 .tools/
