@@ -15,11 +15,12 @@ data class LedgerBackup(
     val events: List<LedgerEvent>,
     val entries: List<LedgerEntry>,
     val hidden: List<HiddenCategory>,
+    val publicEvents: List<PublicBundle> = emptyList(),
 )
 
 object BackupJson {
     fun encode(data: LedgerBackup): String = JSONObject().apply {
-        put("format", "SPSir"); put("version", 1); put("exportedAt", data.exportedAt)
+        put("format", "SPSir"); put("version", 2); put("exportedAt", data.exportedAt)
         put("categories", JSONArray().apply { data.categories.forEach { c -> put(JSONObject().apply {
             put("id", c.id); put("name", c.name); put("parentId", c.parentId ?: JSONObject.NULL)
             put("kind", c.kind); put("sortOrder", c.sortOrder)
@@ -31,12 +32,25 @@ object BackupJson {
             put("occurredOn", e.occurredOn); put("note", e.note)
         }) } })
         put("hiddenCategories", JSONArray(data.hidden.map { it.categoryId }))
+        put("publicEvents", JSONArray().apply { data.publicEvents.forEach { bundle -> put(JSONObject().apply {
+            put("eventId", bundle.event.eventId)
+            put("members", JSONArray().apply { bundle.members.forEach { m -> put(JSONObject().apply {
+                put("id", m.id); put("eventId", m.eventId); put("name", m.name); put("isSelf", m.isSelf); put("position", m.position)
+            }) } })
+            put("expenses", JSONArray().apply { bundle.expenses.forEach { row -> put(JSONObject().apply {
+                val e = row.expense
+                put("id", e.id); put("eventId", e.eventId); put("payerId", e.payerId)
+                put("originalMinor", e.originalMinor); put("currency", e.currency); put("rmbMinor", e.rmbMinor)
+                put("categoryId", e.categoryId); put("occurredOn", e.occurredOn); put("note", e.note); put("entryId", e.entryId ?: JSONObject.NULL)
+                put("participants", JSONArray(row.participants.map { it.memberId }))
+            }) } })
+        }) } })
     }.toString(2)
 
     fun decode(text: String): LedgerBackup {
         try {
             val root = JSONObject(text)
-            require(root.string("format") == "SPSir" && root.integer("version") == 1L) { "不支持的备份格式或版本" }
+            require(root.string("format") == "SPSir" && root.integer("version") in 1L..2L) { "不支持的备份格式或版本" }
             fun <T> objects(key: String, read: (JSONObject) -> T): List<T> {
                 val array = root.getJSONArray(key)
                 return (0 until array.length()).map { read(array.getJSONObject(it)) }
@@ -53,6 +67,24 @@ object BackupJson {
                 root.getJSONArray("hiddenCategories").let { a -> (0 until a.length()).map {
                     val id = a.get(it); require(id is String) { "隐藏分类无效" }; HiddenCategory(id)
                 } },
+                if (root.integer("version") == 1L) emptyList() else objects("publicEvents") { b ->
+                    val members = b.getJSONArray("members").let { a -> (0 until a.length()).map { i ->
+                        val m = a.getJSONObject(i)
+                        val position = m.integer("position")
+                        require(position in 0..Int.MAX_VALUE.toLong()) { "成员顺序无效" }
+                        val self = m.get("isSelf"); require(self is Boolean) { "成员身份无效" }
+                        EventMember(m.string("id"), m.string("eventId"), m.string("name"), self, position.toInt())
+                    } }
+                    val expenses = b.getJSONArray("expenses").let { a -> (0 until a.length()).map { i ->
+                        val e = a.getJSONObject(i)
+                        val expense = PublicExpense(e.string("id"), e.string("eventId"), e.string("payerId"), e.integer("originalMinor"), e.string("currency"), e.integer("rmbMinor"), e.string("categoryId"), e.string("occurredOn"), e.string("note"), e.optionalId("entryId"))
+                        val participants = e.getJSONArray("participants").let { p -> (0 until p.length()).map { j ->
+                            val id = p.get(j); require(id is String) { "参与者无效" }; ExpenseMember(expense.id, id)
+                        } }
+                        SharedExpense(expense, participants)
+                    } }
+                    PublicBundle(PublicEvent(b.string("eventId")), members, expenses)
+                },
             )
             validate(data)
             return data
@@ -75,13 +107,16 @@ object BackupJson {
         }
         data.events.forEach { require(it.name.isNotBlank() && it.name.length <= 40) { "事件名称无效" } }
         data.hidden.forEach { require(categories[it.categoryId]?.kind == "expense") { "隐藏分类引用无效" } }
+        val derived = validatePublicBackup(data)
         data.entries.forEach { e ->
             val c = categories[e.categoryId]
             require(c != null && c.kind == e.kind && (e.kind == "income" || c.parentId != null)) { "流水分类引用无效" }
             require(e.eventId == null || (e.kind == "expense" && e.eventId in events)) { "流水事件引用无效" }
             val currency = MoneyCurrency.valueOf(e.currency)
-            Money.parse(Money.format(e.originalMinor, currency.digits), currency.digits)
-            Money.parse(Money.format(e.rmbMinor))
+            if (e.id !in derived) {
+                Money.parse(Money.format(e.originalMinor, currency.digits), currency.digits)
+                Money.parse(Money.format(e.rmbMinor))
+            }
             require(currency != MoneyCurrency.CNY || e.originalMinor == e.rmbMinor) { "人民币金额不一致" }
             Money.date(e.occurredOn)
             require(e.note.length <= 500) { "备注超过 500 字" }
@@ -101,7 +136,7 @@ object BackupJson {
 
 class BackupStore(private val db: LedgerDatabase, private val safetyFile: File) {
     suspend fun snapshot(): LedgerBackup = db.withTransaction {
-        LedgerBackup(Instant.now().toString(), db.dao().allCategories(), db.dao().allEvents(), db.dao().allEntries(), db.dao().allHidden())
+        LedgerBackup(Instant.now().toString(), db.dao().allCategories(), db.dao().allEvents(), db.dao().allEntries(), db.dao().allHidden(), db.publicDao().all())
     }
 
     suspend fun restore(data: LedgerBackup) = withContext(Dispatchers.IO) {
@@ -114,10 +149,16 @@ class BackupStore(private val db: LedgerDatabase, private val safetyFile: File) 
             try { stream.write(previous); file.finishWrite(stream) }
             catch (e: Exception) { file.failWrite(stream); throw e }
             check(file.openRead().use { it.readBytes() }.contentEquals(previous)) { "覆盖前副本校验失败" }
+            db.publicDao().clearParticipants(); db.publicDao().clearExpenses(); db.publicDao().clearMembers(); db.publicDao().clearEvents()
             db.dao().clearEntries(); db.dao().clearEvents(); db.dao().clearHidden(); db.dao().clearCategories()
             db.dao().seed(data.categories)
             db.dao().insertEvents(data.events)
             db.dao().insertEntries(data.entries)
+            data.publicEvents.forEach { b ->
+                db.publicDao().insertEvent(b.event)
+                b.members.forEach { db.publicDao().member(it) }
+                b.expenses.forEach { row -> db.publicDao().expense(row.expense); db.publicDao().participants(row.participants) }
+            }
             data.hidden.forEach { db.dao().hide(it) }
             // A supported older backup may omit newly introduced presets.
             db.dao().seed(presetCategories().filter { p -> data.categories.none { it.id == p.id } })
@@ -128,4 +169,40 @@ class BackupStore(private val db: LedgerDatabase, private val safetyFile: File) 
         require(safetyFile.exists() || File(safetyFile.path + ".bak").exists()) { "尚无覆盖前副本；首次成功恢复前不会生成副本" }
         return BackupJson.decode(AtomicFile(safetyFile).openRead().bufferedReader(Charsets.UTF_8).use { it.readText() })
     }
+}
+
+fun validatePublicBackup(data: LedgerBackup): Set<String> {
+    val eventIds = mutableSetOf<String>()
+    val memberIds = mutableSetOf<String>()
+    val expenseIds = mutableSetOf<String>()
+    val entryIds = mutableSetOf<String>()
+    val entries = data.entries.associateBy { it.id }
+    data.publicEvents.forEach { bundle ->
+        val event = bundle.event.eventId
+        require(eventIds.add(event) && data.events.any { it.id == event }) { "公共事件引用无效" }
+        require(bundle.members.count { it.isSelf } == 1) { "公共事件必须有一个本人" }
+        val names = mutableSetOf<String>(); val positions = mutableSetOf<Int>()
+        bundle.members.forEach { m ->
+            require(m.id.isNotBlank() && memberIds.add(m.id) && m.eventId == event) { "成员引用无效" }
+            require(m.name == m.name.trim() && m.name.length in 1..20 && names.add(m.name)) { "成员昵称无效" }
+            require(m.isSelf == (m.name == "我") && m.position >= 0 && positions.add(m.position)) { "成员身份或顺序无效" }
+        }
+        bundle.expenses.forEach { row ->
+            val e = row.expense
+            require(e.id.isNotBlank() && expenseIds.add(e.id) && e.eventId == event) { "公共开支引用无效" }
+            require(bundle.members.any { it.id == e.payerId }) { "付款人不属于本事件" }
+            require(row.participants.isNotEmpty() && row.participants.map { it.memberId }.distinct().size == row.participants.size && row.participants.all { p -> p.expenseId == e.id && bundle.members.any { it.id == p.memberId } }) { "参与者无效" }
+            val currency = MoneyCurrency.valueOf(e.currency)
+            Money.parse(Money.format(e.originalMinor, currency.digits), currency.digits); Money.parse(Money.format(e.rmbMinor))
+            require(currency != MoneyCurrency.CNY || e.originalMinor == e.rmbMinor) { "公共开支人民币金额不一致" }
+            require(data.categories.any { it.id == e.categoryId && it.kind == "expense" && it.parentId != null }) { "公共开支分类无效" }
+            Money.date(e.occurredOn); require(e.note.length <= 500) { "备注超过 500 字" }
+            val expected = bundle.personalEntry(row, e.entryId ?: "missing")
+            if (expected == null) require(e.entryId == null) { "零份额不应关联流水" }
+            else require(e.entryId != null && entryIds.add(e.entryId) && entries[e.entryId] == expected) { "公共开支与个人流水不一致" }
+        }
+        bundle.balances() // Checked arithmetic also validates aggregate overflow.
+    }
+    require(data.entries.none { it.eventId in eventIds && it.id !in entryIds }) { "公共事件存在未关联流水" }
+    return entryIds
 }

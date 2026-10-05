@@ -167,14 +167,14 @@ private fun Legend(label: String, color: Color) {
 }
 
 @Composable
-fun CategoryBreakdown(rows: List<LedgerRow>, categories: List<Category>, allowIncome: Boolean = true) {
+fun CategoryBreakdown(rows: List<LedgerRow>, categories: List<Category>, allowIncome: Boolean = true, title: String = "各类别占比") {
     var kind by rememberSaveable { mutableStateOf("expense") }
     var parentId by rememberSaveable { mutableStateOf<String?>(null) }
     val parent = categories.find { it.id == parentId }
     val slices = remember(rows, categories, kind, parentId) { categoryShares(rows, categories, kind, parentId) }
     val total = slices.sumOf { it.amount }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("各类别占比", style = MaterialTheme.typography.titleMedium)
+        Text(title, style = MaterialTheme.typography.titleMedium)
         if (allowIncome) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("expense" to "支出占比", "income" to "收入占比").forEach { (key, label) ->
                 FilterChip(selected = key == kind, onClick = { kind = key; parentId = null }, label = { Text(label) })

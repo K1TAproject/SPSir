@@ -38,6 +38,7 @@ fun BackupTools(state: LedgerState, vm: LedgerViewModel) {
         AlertDialog(onDismissRequest = vm::dismissBackup, title = { Text("确认覆盖账本？") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("备份时间：${backup.exportedAt}\n${backup.entries.size} 笔流水 · ${backup.events.size} 个事件\n${backup.hidden.size} 个隐藏分类")
+                if (backup.publicEvents.isNotEmpty()) Text("${backup.publicEvents.size} 个公共事件 · ${backup.publicEvents.sumOf { it.expenses.size }} 笔公共开支")
                 Text("将覆盖当前账本，不合并。覆盖前会保存副本。")
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             } },

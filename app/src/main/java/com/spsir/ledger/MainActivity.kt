@@ -39,7 +39,9 @@ class MainActivity : ComponentActivity() {
             LedgerTheme {
                 val vm: LedgerViewModel = viewModel()
                 val state by vm.state.collectAsStateWithLifecycle()
-                LedgerScreen(state, vm::save, vm::createEvent, vm::delete, vm::clearError, vm::setCategoryHidden) { BackupTools(state, vm) }
+                LedgerScreen(state, vm::save, vm::createEvent, vm::delete, vm::clearError, vm::setCategoryHidden,
+                    createPublic = vm::createPublic, savePublic = vm::savePublic, deletePublic = vm::deletePublic,
+                    saveMember = vm::saveMember, deleteMember = vm::deleteMember, backupTools = { BackupTools(state, vm) })
             }
         }
     }
@@ -54,6 +56,11 @@ fun LedgerScreen(
     onDelete: (String, () -> Unit) -> Unit = { _, done -> done() },
     clearError: () -> Unit = {},
     setCategoryHidden: (String, Boolean) -> Unit = { _, _ -> },
+    createPublic: (String, List<String>, () -> Unit) -> Unit = { _, _, done -> done() },
+    savePublic: (PublicDraft, () -> Unit) -> Unit = { _, done -> done() },
+    deletePublic: (String, String, () -> Unit) -> Unit = { _, _, done -> done() },
+    saveMember: (String, String?, String, () -> Unit) -> Unit = { _, _, _, done -> done() },
+    deleteMember: (String, String) -> Unit = { _, _ -> },
     backupTools: @Composable () -> Unit = {},
 ) {
     var toolsOpen by rememberSaveable { mutableStateOf(false) }
@@ -70,12 +77,33 @@ fun LedgerScreen(
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var initialEvent by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingEvent by rememberSaveable { mutableStateOf(false) }
+    var publicEventId by rememberSaveable { mutableStateOf<String?>(null) }
+    var publicExpenseId by rememberSaveable { mutableStateOf<String?>(null) }
+    var publicInitial by rememberSaveable(stateSaver = listSaver(
+        save = { listOf(it.id, it.amount, it.currency, it.rmb, it.categoryId, it.eventId.orEmpty(), it.date, it.note) },
+        restore = { EntryDraft(id = it[0], amount = it[1], currency = it[2], rmb = it[3], categoryId = it[4], eventId = it[5].ifEmpty { null }, date = it[6], note = it[7]) },
+    )) { mutableStateOf(EntryDraft()) }
+    var managingMembers by rememberSaveable { mutableStateOf(false) }
+    var settlementTab by rememberSaveable(selectedEvent) { mutableStateOf(false) }
+    val publicBundle = state.publicEvents.find { it.event.eventId == selectedEvent }
+    fun startPublic(bundle: PublicBundle, row: SharedExpense? = null, carried: EntryDraft? = null) {
+        clearError()
+        publicEventId = bundle.event.eventId
+        publicExpenseId = row?.expense?.id
+        publicInitial = row?.expense?.let { e -> EntryDraft(e.id, "expense", Money.format(e.originalMinor, MoneyCurrency.valueOf(e.currency).digits), e.currency, Money.format(e.rmbMinor), e.categoryId, e.eventId, e.occurredOn, e.note) }
+            ?: carried?.copy(eventId = bundle.event.eventId)
+            ?: EntryDraft(eventId = bundle.event.eventId, categoryId = recentCategories(state).firstOrNull()?.id ?: visibleExpenseCategories(state).firstOrNull()?.id.orEmpty())
+        editorOpen = false
+    }
     val event = state.events.find { it.id == selectedEvent }
     val monthRows = state.rows.filter { it.entry.occurredOn.startsWith(month) }
     val displayRows = if (filtering) filterRows(state.rows, state.categories, filter) else monthRows
     val eventRows = state.rows.filter { it.entry.eventId == selectedEvent && selectedEvent != null }
 
     fun startEntry(row: LedgerRow? = null) {
+        val source = state.publicEvents.firstOrNull { b -> b.expenses.any { it.expense.entryId == row?.entry?.id && row != null } }
+        if (source != null) { startPublic(source, source.expenses.single { it.expense.entryId == row!!.entry.id }); return }
+        if (row == null && tab == 1 && publicBundle != null) { startPublic(publicBundle); return }
         clearError()
         editingId = row?.entry?.id
         initialEvent = if (tab == 1) selectedEvent else null
@@ -100,7 +128,7 @@ fun LedgerScreen(
         },
         floatingActionButton = {
             if (!toolsOpen && !state.loading && !state.saving && state.categories.isNotEmpty()) {
-                ExtendedFloatingActionButton(onClick = { startEntry() }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) { Text("＋ 记一笔") }
+                ExtendedFloatingActionButton(onClick = { startEntry() }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) { Text(if (tab == 1 && publicBundle != null) "＋ 记开支" else "＋ 记一笔") }
             }
         },
     ) { padding ->
@@ -157,14 +185,19 @@ fun LedgerScreen(
                     if (state.events.isEmpty()) item { EmptyText("暂无事件") }
                     items(state.events, key = { it.id }) { item ->
                         val rows = state.rows.filter { it.entry.eventId == item.id }
+                        val shared = state.publicEvents.find { it.event.eventId == item.id }
                         OutlinedCard(onClick = { selectedEvent = item.id }, modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(item.name, style = MaterialTheme.typography.titleMedium)
-                                Text("¥ ${Money.format(expenseTotal(rows))}", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
-                                Text("${rows.size} 笔支出 · ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (shared != null) Text("公共 · ${shared.members.size} 人")
+                                Text("${if (shared != null) "事件总额 " else ""}¥ ${Money.format(if (shared != null) shared.balances().fold(0L) { sum, b -> Math.addExact(sum, b.paid) } else expenseTotal(rows))}", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                                if (shared != null) Text("我的支出 ¥ ${Money.format(shared.balances().single { it.member.isSelf }.share)}")
+                                Text("${shared?.expenses?.size ?: rows.size} 笔支出 · ›", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
+                } else if (publicBundle != null) {
+                    publicEventContent(publicBundle, state, settlementTab, { settlementTab = it }, { clearError(); managingMembers = true }) { startPublic(publicBundle, it) }
                 } else {
                     item { TotalCard(eventRows, "事件累计支出", showIncome = false) }
                     item { CategoryBreakdown(eventRows, state.categories, allowIncome = false) }
@@ -189,20 +222,57 @@ fun LedgerScreen(
             dismiss = { if (!state.saving) { editorOpen = false; clearError() } },
             save = { draft -> onSave(draft) { editorOpen = false } },
             delete = { onDelete(it) { editorOpen = false } },
+            openPublic = { draft -> startPublic(state.publicEvents.single { it.event.eventId == draft.eventId }, carried = draft) },
         )
     }
+    val editingBundle = state.publicEvents.find { it.event.eventId == publicEventId }
+    if (editingBundle != null) key(publicInitial.id) {
+        PublicExpenseEditor(publicInitial, editingBundle.expenses.find { it.expense.id == publicExpenseId }, editingBundle, state,
+            close = { if (!state.saving) { publicEventId = null; clearError() } },
+            save = { draft -> savePublic(draft) { publicEventId = null } },
+            delete = { deletePublic(editingBundle.event.eventId, publicInitial.id) { publicEventId = null } })
+    }
+    if (managingMembers && publicBundle != null) PublicMembersDialog(publicBundle, state,
+        { if (!state.saving) { managingMembers = false; clearError() } },
+        { id, name, done -> saveMember(publicBundle.event.eventId, id, name, done) },
+        { id -> deleteMember(publicBundle.event.eventId, id) })
     if (creatingEvent) {
+        var shared by rememberSaveable { mutableStateOf(false) }
+        var names by rememberSaveable { mutableStateOf(listOf<String>()) }
+        var memberName by rememberSaveable { mutableStateOf("") }
+        var memberError by rememberSaveable { mutableStateOf<String?>(null) }
         var name by rememberSaveable { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { if (!state.saving) { creatingEvent = false; clearError() } },
             title = { Text("新建事件") },
+            modifier = Modifier.systemBarsPadding().imePadding().fillMaxWidth().padding(horizontal = 16.dp),
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(name, { name = it }, label = { Text("事件名称") }, singleLine = true)
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(name, { name = it }, label = { Text("事件名称") }, singleLine = true, enabled = !state.saving)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(!shared, { shared = false }, enabled = !state.saving, label = { Text("个人事件") })
+                        FilterChip(shared, { shared = true }, enabled = !state.saving, label = { Text("公共事件") })
+                    }
+                    if (shared) {
+                        Text("本机记录，多人分摊", style = MaterialTheme.typography.bodySmall)
+                        Text("我")
+                        names.forEach { n -> TextButton(enabled = !state.saving, onClick = { names = names - n }) { Text("$n ×") } }
+                        OutlinedTextField(memberName, { memberName = it; memberError = null }, label = { Text("同行者昵称") }, enabled = !state.saving, singleLine = true)
+                        TextButton(enabled = !state.saving, onClick = {
+                            val n = memberName.trim()
+                            if (n.length !in 1..20 || n == "我" || n in names) memberError = "昵称须为 1～20 字且不能重复"
+                            else { names = names + n; memberName = ""; memberError = null }
+                        }) { Text("添加同行者") }
+                        memberError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    }
                     state.error?.let { ErrorText(it) }
                 }
             },
-            confirmButton = { TextButton(enabled = !state.saving, onClick = { onCreateEvent(name) { creatingEvent = false } }) { Text("创建") } },
+            confirmButton = { TextButton(enabled = !state.saving, onClick = {
+                if (shared) createPublic(name, names + listOfNotNull(memberName.trim().takeIf { it.isNotEmpty() })) { creatingEvent = false }
+                else onCreateEvent(name) { creatingEvent = false }
+            }) { Text("创建") } },
             dismissButton = { TextButton(enabled = !state.saving, onClick = { creatingEvent = false; clearError() }) { Text("取消") } },
         )
     }
@@ -272,7 +342,7 @@ fun ChoiceField(label: String, value: String, choices: List<Pair<String, String>
 }
 
 @Composable
-private fun EntryEditor(initial: EntryDraft, editing: Boolean, state: LedgerState, dismiss: () -> Unit, save: (EntryDraft) -> Unit, delete: (String) -> Unit) {
+private fun EntryEditor(initial: EntryDraft, editing: Boolean, state: LedgerState, dismiss: () -> Unit, save: (EntryDraft) -> Unit, delete: (String) -> Unit, openPublic: (EntryDraft) -> Unit) {
     val id by rememberSaveable { mutableStateOf(initial.id) }
     var kind by rememberSaveable { mutableStateOf(initial.kind) }
     var amount by rememberSaveable { mutableStateOf(initial.amount) }
@@ -318,7 +388,10 @@ private fun EntryEditor(initial: EntryDraft, editing: Boolean, state: LedgerStat
                             FilterChip(selected = categoryId == c.id, enabled = !state.saving, onClick = { categoryId = c.id }, label = { Text(c.name) })
                         } }
                     }
-                    ChoiceField("关联事件", state.events.find { it.id == eventId }?.name ?: "无事件", listOf("" to "无事件") + state.events.map { it.id to it.name }, !state.saving) { eventId = it.ifEmpty { null } }
+                    ChoiceField("关联事件", state.events.find { it.id == eventId }?.name ?: "无事件", listOf("" to "无事件") + state.events.filter { e -> !editing || state.publicEvents.none { it.event.eventId == e.id } }.map { it.id to it.name }, !state.saving) {
+                        if (state.publicEvents.any { b -> b.event.eventId == it }) openPublic(EntryDraft(id, kind, amount, currency, rmb, categoryId, it, date, note))
+                        else eventId = it.ifEmpty { null }
+                    }
                 }
                 LedgerDateField("记账日期", date, !state.saving) { date = it }
                 OutlinedTextField(note, { note = it }, label = { Text("备注（可选）") }, maxLines = 3, enabled = !state.saving)

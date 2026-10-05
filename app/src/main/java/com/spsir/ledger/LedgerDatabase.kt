@@ -112,6 +112,12 @@ interface LedgerDao {
     @Query("SELECT * FROM events WHERE id = :id")
     suspend fun event(id: String): LedgerEvent?
 
+    @Query("SELECT COUNT(*) FROM public_events WHERE eventId = :id")
+    suspend fun isPublic(id: String): Int
+
+    @Query("SELECT COUNT(*) FROM public_expenses WHERE entryId = :id")
+    suspend fun isDerived(id: String): Int
+
     // Update preset labels in place; unlike REPLACE this preserves referenced rows.
     @Upsert
     suspend fun seed(categories: List<Category>)
@@ -126,9 +132,10 @@ interface LedgerDao {
     suspend fun deleteEntry(id: String)
 }
 
-@Database(entities = [Category::class, LedgerEvent::class, LedgerEntry::class, HiddenCategory::class], version = 2, exportSchema = true)
+@Database(entities = [Category::class, LedgerEvent::class, LedgerEntry::class, HiddenCategory::class, PublicEvent::class, EventMember::class, PublicExpense::class, ExpenseMember::class], version = 3, exportSchema = true)
 abstract class LedgerDatabase : RoomDatabase() {
     abstract fun dao(): LedgerDao
+    abstract fun publicDao(): PublicDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -136,9 +143,14 @@ abstract class LedgerDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS hidden_categories (categoryId TEXT NOT NULL PRIMARY KEY)")
             }
         }
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                publicSchema.forEach { db.execSQL(it) }
+            }
+        }
         fun open(context: Context, name: String = "ledger.db"): LedgerDatabase =
             Room.databaseBuilder(context.applicationContext, LedgerDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2).build()
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
     }
 }
 
