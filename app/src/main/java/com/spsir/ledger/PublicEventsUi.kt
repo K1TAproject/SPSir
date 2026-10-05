@@ -18,9 +18,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 
-fun LazyListScope.publicEventContent(bundle: PublicBundle, state: LedgerState, settlement: Boolean,
+fun LazyListScope.publicEventContent(bundle: PublicBundle, balances: List<MemberBalance>, state: LedgerState, settlement: Boolean,
     selectTab: (Boolean) -> Unit, members: () -> Unit, edit: (SharedExpense) -> Unit) {
-    val balances = bundle.balances()
     val total = balances.fold(0L) { sum, b -> Math.addExact(sum, b.paid) }
     item {
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)) {
@@ -108,7 +107,12 @@ fun PublicExpenseEditor(initial: EntryDraft, existing: SharedExpense?, bundle: P
         val yuan = splitAmount(if (currency == "CNY") Money.parse(amount) else Money.parse(rmb), participants)
         original to yuan
     }.getOrNull()
-    AlertDialog(onDismissRequest = close, title = { Text(if (existing == null) "记开支" else "编辑公共开支") },
+    val baseline by rememberSaveable(stateSaver = entryDraftSaver) { mutableStateOf(initial) }
+    val initialPayer by rememberSaveable { mutableStateOf(payer) }
+    val initialPeople by rememberSaveable { mutableStateOf(selected) }
+    val draft = initial.copy(amount = amount, currency = currency, rmb = rmb, categoryId = category, date = date, note = note)
+    val requestClose = rememberDiscardChanges(draft != baseline || payer != initialPayer || selected.toSet() != initialPeople.toSet() || (existing == null && amount.isNotBlank()), state.saving, close)
+    AlertDialog(onDismissRequest = requestClose, title = { Text(if (existing == null) "记开支" else "编辑公共开支") },
         modifier = Modifier.systemBarsPadding().imePadding().fillMaxWidth().padding(horizontal = 16.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         text = {
@@ -141,7 +145,7 @@ fun PublicExpenseEditor(initial: EntryDraft, existing: SharedExpense?, bundle: P
                 if (existing != null) TextButton(onClick = { confirming = true }, enabled = !state.saving) { Text("删除公共开支", color = MaterialTheme.colorScheme.error) }
             }
         }, confirmButton = { Button(enabled = !state.saving, onClick = { save(PublicDraft(initial.copy(kind = "expense", amount = amount, currency = currency, rmb = rmb, categoryId = category, date = date, note = note, eventId = bundle.event.eventId), payer, selected.toSet())) }) { Text("保存") } },
-        dismissButton = { TextButton(enabled = !state.saving, onClick = close) { Text("取消") } })
+        dismissButton = { TextButton(enabled = !state.saving, onClick = requestClose) { Text("取消") } })
     if (picking) CategoryPicker(state, category, initial.categoryId, { picking = false }) { category = it }
     if (confirming) AlertDialog(onDismissRequest = { if (!state.saving) confirming = false }, title = { Text("删除整笔公共开支？") }, text = { Text("将同步更新所有人的分摊。") },
         confirmButton = { TextButton(enabled = !state.saving, onClick = delete) { Text("确认删除") } }, dismissButton = { TextButton(enabled = !state.saving, onClick = { confirming = false }) { Text("取消") } })
@@ -152,7 +156,8 @@ fun PublicMembersDialog(bundle: PublicBundle, state: LedgerState, close: () -> U
     save: (String?, String, () -> Unit) -> Unit, delete: (String) -> Unit) {
     var editing by rememberSaveable { mutableStateOf<String?>(null) }
     var name by rememberSaveable { mutableStateOf("") }
-    AlertDialog(onDismissRequest = close, title = { Text("成员") },
+    val requestClose = rememberDiscardChanges(name.isNotEmpty(), state.saving, close)
+    AlertDialog(onDismissRequest = requestClose, title = { Text("成员") },
         modifier = Modifier.systemBarsPadding().imePadding(),
         text = { Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             bundle.members.sortedBy { it.position }.forEach { m ->
@@ -166,5 +171,5 @@ fun PublicMembersDialog(bundle: PublicBundle, state: LedgerState, close: () -> U
             Button(enabled = !state.saving, onClick = { save(editing, name) { name = ""; editing = null } }) { Text(if (editing == null) "添加" else "保存昵称") }
             if (editing != null) TextButton(onClick = { editing = null; name = "" }) { Text("取消改名") }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        } }, confirmButton = { TextButton(enabled = !state.saving, onClick = close) { Text("完成") } })
+        } }, confirmButton = { TextButton(enabled = !state.saving, onClick = requestClose) { Text("完成") } })
 }

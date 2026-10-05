@@ -1,7 +1,6 @@
 package com.spsir.ledger
 
 import androidx.room.*
-import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
 @Entity(tableName = "public_events", foreignKeys = [ForeignKey(entity = LedgerEvent::class, parentColumns = ["id"], childColumns = ["eventId"], onDelete = ForeignKey.RESTRICT)])
@@ -34,7 +33,6 @@ data class PublicBundle(@Embedded val event: PublicEvent,
 
 @Dao
 interface PublicDao {
-    @Transaction @Query("SELECT * FROM public_events ORDER BY eventId") fun watch(): Flow<List<PublicBundle>>
     @Transaction @Query("SELECT * FROM public_events ORDER BY eventId") suspend fun all(): List<PublicBundle>
     @Transaction @Query("SELECT * FROM public_events WHERE eventId = :id") suspend fun bundle(id: String): PublicBundle?
     @Query("SELECT * FROM public_expenses WHERE entryId = :id") suspend fun fromEntry(id: String): PublicExpense?

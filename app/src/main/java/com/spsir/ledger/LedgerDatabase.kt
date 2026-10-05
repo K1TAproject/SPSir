@@ -53,9 +53,6 @@ data class LedgerRow(
 
 @Dao
 interface LedgerDao {
-    @Query("SELECT * FROM hidden_categories ORDER BY categoryId")
-    fun hiddenCategories(): Flow<List<HiddenCategory>>
-
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun hide(category: HiddenCategory)
 
@@ -105,6 +102,15 @@ interface LedgerDao {
         ORDER BY occurredOn DESC, entries.rowid DESC
     """)
     fun rows(): Flow<List<LedgerRow>>
+
+    @Query("""
+        SELECT entries.*, c.name AS categoryName, p.name AS groupName, e.name AS eventName
+        FROM entries JOIN categories c ON entries.categoryId = c.id
+        LEFT JOIN categories p ON c.parentId = p.id
+        LEFT JOIN events e ON entries.eventId = e.id
+        ORDER BY occurredOn DESC, entries.rowid DESC
+    """)
+    suspend fun allRows(): List<LedgerRow>
 
     @Query("SELECT * FROM categories WHERE id = :id")
     suspend fun category(id: String): Category?

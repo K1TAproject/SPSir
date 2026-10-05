@@ -19,6 +19,26 @@ data class LedgerBackup(
 )
 
 object BackupJson {
+    const val MAX_BYTES = 20 * 1024 * 1024
+
+    fun exportBytes(data: LedgerBackup): ByteArray {
+        val bytes = encode(data).toByteArray(Charsets.UTF_8)
+        require(bytes.size <= MAX_BYTES) { "备份超过 20 MB，未导出；请保留当前账本并联系开发者" }
+        return bytes
+    }
+
+    fun read(input: java.io.InputStream): LedgerBackup {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count == -1) break
+            require(count <= MAX_BYTES - output.size()) { "备份超过 20 MB，无法恢复" }
+            output.write(buffer, 0, count)
+        }
+        return decode(output.toString(Charsets.UTF_8.name()))
+    }
+
     fun encode(data: LedgerBackup): String = JSONObject().apply {
         put("format", "SPSir"); put("version", 2); put("exportedAt", data.exportedAt)
         put("categories", JSONArray().apply { data.categories.forEach { c -> put(JSONObject().apply {
@@ -45,7 +65,7 @@ object BackupJson {
                 put("participants", JSONArray(row.participants.map { it.memberId }))
             }) } })
         }) } })
-    }.toString(2)
+    }.toString()
 
     fun decode(text: String): LedgerBackup {
         try {
@@ -99,11 +119,12 @@ object BackupJson {
         val categories = data.categories.associateBy { it.id }
         val events = data.events.map { it.id }.toSet()
         require(categories["income"]?.let { it.kind == "income" && it.parentId == null } == true) { "缺少通用收入分类" }
+        val presets = presetCategories().associateBy { it.id }
         data.categories.forEach { c ->
             require(c.name.isNotBlank() && c.kind in listOf("income", "expense")) { "分类名称或类型无效" }
             require(c.kind != "income" || c.id == "income") { "收入分类无效" }
             if (c.parentId != null) require(c.kind == "expense" && categories[c.parentId]?.let { it.kind == "expense" && it.parentId == null } == true) { "分类层级或引用无效" }
-            presetCategories().find { it.id == c.id }?.let { preset -> require(c.parentId == preset.parentId && c.kind == preset.kind) { "预设分类结构不兼容" } }
+            presets[c.id]?.let { preset -> require(c.parentId == preset.parentId && c.kind == preset.kind) { "预设分类结构不兼容" } }
         }
         data.events.forEach { require(it.name.isNotBlank() && it.name.length <= 40) { "事件名称无效" } }
         data.hidden.forEach { require(categories[it.categoryId]?.kind == "expense") { "隐藏分类引用无效" } }
@@ -114,8 +135,8 @@ object BackupJson {
             require(e.eventId == null || (e.kind == "expense" && e.eventId in events)) { "流水事件引用无效" }
             val currency = MoneyCurrency.valueOf(e.currency)
             if (e.id !in derived) {
-                Money.parse(Money.format(e.originalMinor, currency.digits), currency.digits)
-                Money.parse(Money.format(e.rmbMinor))
+                Money.validateMinor(e.originalMinor, currency.digits)
+                Money.validateMinor(e.rmbMinor)
             }
             require(currency != MoneyCurrency.CNY || e.originalMinor == e.rmbMinor) { "人民币金额不一致" }
             Money.date(e.occurredOn)
@@ -143,7 +164,7 @@ class BackupStore(private val db: LedgerDatabase, private val safetyFile: File) 
         BackupJson.validate(data)
         db.withTransaction {
             // Keep the pre-restore copy durable before any destructive SQL executes.
-            val previous = BackupJson.encode(snapshot()).toByteArray(Charsets.UTF_8)
+            val previous = BackupJson.exportBytes(snapshot())
             val file = AtomicFile(safetyFile)
             val stream = file.startWrite()
             try { stream.write(previous); file.finishWrite(stream) }
@@ -167,7 +188,7 @@ class BackupStore(private val db: LedgerDatabase, private val safetyFile: File) 
 
     fun readSafety(): LedgerBackup {
         require(safetyFile.exists() || File(safetyFile.path + ".bak").exists()) { "尚无覆盖前副本；首次成功恢复前不会生成副本" }
-        return BackupJson.decode(AtomicFile(safetyFile).openRead().bufferedReader(Charsets.UTF_8).use { it.readText() })
+        return AtomicFile(safetyFile).openRead().use { BackupJson.read(it) }
     }
 }
 
@@ -193,7 +214,7 @@ fun validatePublicBackup(data: LedgerBackup): Set<String> {
             require(bundle.members.any { it.id == e.payerId }) { "付款人不属于本事件" }
             require(row.participants.isNotEmpty() && row.participants.map { it.memberId }.distinct().size == row.participants.size && row.participants.all { p -> p.expenseId == e.id && bundle.members.any { it.id == p.memberId } }) { "参与者无效" }
             val currency = MoneyCurrency.valueOf(e.currency)
-            Money.parse(Money.format(e.originalMinor, currency.digits), currency.digits); Money.parse(Money.format(e.rmbMinor))
+            Money.validateMinor(e.originalMinor, currency.digits); Money.validateMinor(e.rmbMinor)
             require(currency != MoneyCurrency.CNY || e.originalMinor == e.rmbMinor) { "公共开支人民币金额不一致" }
             require(data.categories.any { it.id == e.categoryId && it.kind == "expense" && it.parentId != null }) { "公共开支分类无效" }
             Money.date(e.occurredOn); require(e.note.length <= 500) { "备注超过 500 字" }

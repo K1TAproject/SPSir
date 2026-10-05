@@ -32,4 +32,12 @@ class MoneyTest {
         assertEquals(8100L, expenseTotal(all))
         assertEquals(8100L, expenseTotal(all.filter { it.entry.eventId == "trip" }))
     }
+    @org.junit.Test fun storedMoneyChecksMatchInputBounds() {
+        Money.validateMinor(99999999900L)
+        Money.validateMinor(999999999L, 0)
+        for ((value, digits) in listOf(0L to 2, -1L to 2, 100000000000L to 2, 1000000000L to 0)) {
+            try { Money.validateMinor(value, digits); org.junit.Assert.fail("Invalid amount accepted") }
+            catch (_: IllegalArgumentException) {}
+        }
+    }
 }

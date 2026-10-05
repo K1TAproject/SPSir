@@ -10,7 +10,10 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
+import androidx.room.withTransaction
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
+import android.util.Log
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -86,12 +89,16 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 db.dao().seed(presetCategories())
-                combine(db.dao().categories(), db.dao().events(), db.dao().rows(), db.dao().hiddenCategories(), db.publicDao().watch()) { categories, events, rows, hidden, publicEvents ->
-                    mutableState.update { it.copy(loading = false, categories = categories, events = events, rows = rows, hiddenCategories = hidden.map { h -> h.categoryId }.toSet(), publicEvents = publicEvents) }
-                }.collect {}
+                db.invalidationTracker.createFlow("categories", "events", "entries", "hidden_categories",
+                    "public_events", "event_members", "public_expenses", "expense_members")
+                    .map { db.readLedgerState() }.flowOn(Dispatchers.IO).collect { snapshot ->
+                        mutableState.update { snapshot.copy(saving = it.saving, error = it.error,
+                            message = it.message, backupPreview = it.backupPreview) }
+                    }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                logFailure("读取账本", e)
                 mutableState.update { it.copy(loading = false, error = "读取失败，请重启应用。") }
             }
         }
@@ -117,46 +124,37 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     fun dismissBackup() { if (!state.value.saving) mutableState.update { it.copy(backupPreview = null, error = null) } }
     fun clearMessage() = mutableState.update { it.copy(message = null) }
 
-    fun exportBackup(uri: Uri, safety: Boolean = false) = mutate({}) {
+    fun exportBackup(uri: Uri, safety: Boolean = false) = mutate({}, "导出备份") {
         withContext(Dispatchers.IO) {
             val data = if (safety) backups.readSafety() else backups.snapshot()
+            val bytes = BackupJson.exportBytes(data)
             val resolver = getApplication<Application>().contentResolver
-            requireNotNull(resolver.openOutputStream(uri, "wt")) { "无法打开保存位置" }.bufferedWriter(Charsets.UTF_8).use { it.write(BackupJson.encode(data)) }
+            requireNotNull(resolver.openOutputStream(uri, "wt")) { "无法打开保存位置" }.use { it.write(bytes) }
         }
         mutableState.update { it.copy(message = "备份已导出") }
     }
 
-    fun inspectBackup(uri: Uri) = mutate({}) {
+    fun inspectBackup(uri: Uri) = mutate({}, "读取备份") {
         val data = withContext(Dispatchers.IO) {
             val resolver = getApplication<Application>().contentResolver
             requireNotNull(resolver.openInputStream(uri)) { "无法读取文件" }.use { input ->
-                val output = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                var count = input.read(buffer)
-                while (count != -1) {
-                    require(output.size() + count <= 20 * 1024 * 1024) { "备份超过 20 MB，请使用较小文件" }
-                    output.write(buffer, 0, count)
-                    count = input.read(buffer)
-                }
-                val bytes = output.toByteArray()
-                require(bytes.size <= 20 * 1024 * 1024) { "备份超过 20 MB，请使用较小文件" }
-                BackupJson.decode(bytes.toString(Charsets.UTF_8))
+                BackupJson.read(input)
             }
         }
         mutableState.update { it.copy(backupPreview = data) }
     }
 
-    fun inspectSafety() = mutate({}) {
+    fun inspectSafety() = mutate({}, "读取副本") {
         val data = withContext(Dispatchers.IO) { backups.readSafety() }
         mutableState.update { it.copy(backupPreview = data) }
     }
 
     fun restoreBackup() {
         val data = state.value.backupPreview ?: return
-        mutate({ mutableState.update { it.copy(backupPreview = null, message = "账本已恢复") } }) { backups.restore(data) }
+        mutate({ mutableState.update { it.copy(backupPreview = null, message = "账本已恢复") } }, "恢复账本") { backups.restore(data) }
     }
 
-    private fun mutate(done: () -> Unit, action: suspend () -> Unit) {
+    private fun mutate(done: () -> Unit, operation: String = "保存更改", action: suspend () -> Unit) {
         if (state.value.saving) return
         mutableState.update { it.copy(saving = true, error = null, message = null) }
         viewModelScope.launch {
@@ -167,8 +165,9 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                 throw e
             } catch (e: IllegalArgumentException) {
                 mutableState.update { it.copy(error = e.message) }
-            } catch (_: Exception) {
-                mutableState.update { it.copy(error = "操作失败，请检查文件或保存位置。") }
+            } catch (e: Exception) {
+                logFailure(operation, e)
+                mutableState.update { it.copy(error = "${operation}失败，请重试。") }
             } finally {
                 mutableState.update { it.copy(saving = false) }
             }
@@ -178,4 +177,16 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         db.close()
     }
+}
+
+// One transaction prevents the UI from mixing pre- and post-restore tables.
+suspend fun LedgerDatabase.readLedgerState(): LedgerState = withTransaction {
+    LedgerState(loading = false, categories = dao().allCategories(), events = dao().allEvents().reversed(),
+        rows = dao().allRows(), hiddenCategories = dao().allHidden().map { it.categoryId }.toSet(),
+        publicEvents = publicDao().all())
+}
+
+private fun logFailure(operation: String, error: Exception) {
+    // Do not log exception messages or causes: providers/SQL can include personal data.
+    Log.e("SPSir", "$operation: ${error.javaClass.name}\n${error.stackTrace.joinToString("\n")}")
 }

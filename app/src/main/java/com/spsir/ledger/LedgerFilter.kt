@@ -29,6 +29,6 @@ fun visibleExpenseCategories(state: LedgerState): List<Category> = state.categor
 
 fun recentCategories(state: LedgerState): List<Category> {
     val visible = visibleExpenseCategories(state).associateBy { it.id }
-    return state.rows.filter { it.entry.kind == "expense" }.sortedByDescending { it.entry.occurredOn }
-        .mapNotNull { visible[it.entry.categoryId] }.distinctBy { it.id }.take(6)
+    return state.rows.asSequence().filter { it.entry.kind == "expense" }.sortedByDescending { it.entry.occurredOn }
+        .mapNotNull { visible[it.entry.categoryId] }.distinctBy { it.id }.take(6).toList()
 }

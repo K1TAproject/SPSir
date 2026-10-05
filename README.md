@@ -1,4 +1,4 @@
-# SPSir · Android 0.4.1
+# SPSir · Android 0.4.2
 
 个人手动记账原型。Kotlin + Jetpack Compose + Room / SQLite，最低 Android 8.0（API 26）。
 
@@ -36,7 +36,7 @@
 
 数据库版本为 3，支持 1 → 2 → 3 迁移，新增公共事件相关表并保留旧个人事件与流水。备份格式版本与数据库版本相互独立。
 
-本版开发需求见 [0.4 需求](docs/REQUIREMENTS-0.4.md)，功能验证见 [0.4 验证记录](docs/BUILD-0.4.md)，名称更新见 [0.4.1 验证记录](docs/BUILD-0.4.1.md)。历史版本记录仍保留。
+本版开发需求见 [0.4 需求](docs/REQUIREMENTS-0.4.md)，功能验证见 [0.4 验证记录](docs/BUILD-0.4.md)，名称更新见 [0.4.1 验证记录](docs/BUILD-0.4.1.md)。稳定性与性能优化见 [0.4.2 验证记录](docs/BUILD-0.4.2.md)。历史版本记录仍保留。
 
 ## 电脑上预览与调试
 
