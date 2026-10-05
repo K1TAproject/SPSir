@@ -112,7 +112,7 @@ fun LedgerScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background), title = { Text(if (toolsOpen) "账本工具" else if (tab == 1 && event != null) event.name else listOf("随手账本", "事件", "消费结构")[tab]) },
+            TopAppBar(colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background), title = { Text(if (toolsOpen) "账本工具" else if (tab == 1 && event != null) event.name else listOf("SPSir", "事件", "消费结构")[tab]) },
                 navigationIcon = {
                     if (toolsOpen) TextButton(enabled = !state.saving, onClick = { toolsOpen = false; clearError() }) { Text("返回") }
                     else if (tab == 1 && event != null) TextButton(onClick = { selectedEvent = null }) { Text("返回") }
