@@ -40,7 +40,8 @@ class MainActivity : ComponentActivity() {
                 val state by vm.state.collectAsStateWithLifecycle()
                 LedgerScreen(state, vm::save, vm::createEvent, vm::delete, vm::clearError, vm::setCategoryHidden,
                     createPublic = vm::createPublic, savePublic = vm::savePublic, deletePublic = vm::deletePublic,
-                    saveMember = vm::saveMember, deleteMember = vm::deleteMember, backupTools = { BackupTools(state, vm) })
+                    saveMember = vm::saveMember, deleteMember = vm::deleteMember, renameEvent = vm::renameEvent, archiveEvent = vm::archiveEvent,
+                    saveTransfer = vm::saveTransfer, deleteTransfer = vm::deleteTransfer, backupTools = { BackupTools(state, vm) })
             }
         }
     }
@@ -61,7 +62,21 @@ fun LedgerScreen(
     saveMember: (String, String?, String, () -> Unit) -> Unit = { _, _, _, done -> done() },
     deleteMember: (String, String) -> Unit = { _, _ -> },
     backupTools: @Composable () -> Unit = {},
+    renameEvent: (String, String, () -> Unit) -> Unit = { _, _, done -> done() },
+    archiveEvent: (String, Boolean, Boolean, () -> Unit) -> Unit = { _, _, _, done -> done() },
+    saveTransfer: (TransferDraft, Boolean, () -> Unit) -> Unit = { _, _, done -> done() },
+    deleteTransfer: (String, String, () -> Unit) -> Unit = { _, _, done -> done() },
 ) {
+    var showArchived by rememberSaveable { mutableStateOf(false) }
+    var eventMenu by remember { mutableStateOf(false) }
+    var renaming by rememberSaveable { mutableStateOf(false) }
+    var archiving by rememberSaveable { mutableStateOf(false) }
+    var sharingBill by rememberSaveable { mutableStateOf(false) }
+    var transferOpen by rememberSaveable { mutableStateOf(false) }
+    var transferEditing by rememberSaveable { mutableStateOf(false) }
+    var transferInitial by rememberSaveable(stateSaver = transferDraftSaver) {
+        mutableStateOf(TransferDraft(eventId = "", fromId = "", toId = ""))
+    }
     var toolsOpen by rememberSaveable { mutableStateOf(false) }
     var filtering by rememberSaveable { mutableStateOf(false) }
     var filterOpen by rememberSaveable { mutableStateOf(false) }
@@ -95,6 +110,7 @@ fun LedgerScreen(
         editorOpen = false
     }
     val event = state.events.find { it.id == selectedEvent }
+    val listedEvents = state.events.filter { it.archived == showArchived }
     val monthRows = remember(state.rows, month) { state.rows.filter { it.entry.occurredOn.startsWith(month) } }
     val displayRows = remember(state.rows, state.categories, filtering, filter, monthRows) { if (filtering) filterRows(state.rows, state.categories, filter) else monthRows }
     val rowsByEvent = remember(state.rows) { state.rows.groupBy { it.entry.eventId } }
@@ -129,7 +145,19 @@ fun LedgerScreen(
                 navigationIcon = {
                     if (toolsOpen) TextButton(enabled = !state.saving, onClick = { toolsOpen = false; clearError() }) { Text("返回") }
                     else if (tab == 1 && event != null) TextButton(onClick = { selectedEvent = null }) { Text("返回") }
-                }, actions = { if (!toolsOpen) TextButton(enabled = !state.loading && !state.saving, onClick = { toolsOpen = true; clearError() }) { Text("工具") } })
+                }, actions = {
+                    if (!toolsOpen && tab == 1 && event != null) Box {
+                        TextButton(enabled = !state.saving, onClick = { eventMenu = true }) { Text("更多") }
+                        DropdownMenu(eventMenu, { eventMenu = false }) {
+                            DropdownMenuItem(text = { Text("改名") }, onClick = { eventMenu = false; clearError(); renaming = true })
+                            DropdownMenuItem(text = { Text(if (event.archived) "取消归档" else "归档") }, onClick = {
+                                eventMenu = false; clearError()
+                                if (event.archived) archiveEvent(event.id, false, false) {} else archiving = true
+                            })
+                        }
+                    }
+                    if (!toolsOpen) TextButton(enabled = !state.loading && !state.saving, onClick = { toolsOpen = true; clearError() }) { Text("工具") }
+                })
         },
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
@@ -140,7 +168,7 @@ fun LedgerScreen(
             }
         },
         floatingActionButton = {
-            if (!toolsOpen && !state.loading && !state.saving && state.categories.isNotEmpty()) {
+            if (!toolsOpen && !state.loading && !state.saving && state.categories.isNotEmpty() && !(tab == 1 && event?.archived == true)) {
                 ExtendedFloatingActionButton(onClick = { startEntry() }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) { Text(if (tab == 1 && publicBundle != null) "＋ 记开支" else "＋ 记一笔") }
             }
         },
@@ -150,6 +178,7 @@ fun LedgerScreen(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 110.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (!toolsOpen && tab == 1 && event?.archived == true) item { Text("已归档 · 取消归档后可编辑", style = MaterialTheme.typography.bodySmall) }
             if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             if (state.error != null && !editorOpen && !creatingEvent) item { ErrorText(state.error) }
             state.message?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
@@ -195,8 +224,12 @@ fun LedgerScreen(
                 }
                 1 -> if (event == null) {
                     item { OutlinedButton(onClick = { clearError(); creatingEvent = true }) { Text("＋ 新建事件") } }
-                    if (state.events.isEmpty()) item { EmptyText("暂无事件") }
-                    items(state.events, key = { it.id }) { item ->
+                    item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(!showArchived, { showArchived = false }, label = { Text("进行中") })
+                        FilterChip(showArchived, { showArchived = true }, label = { Text("已归档") })
+                    } }
+                    if (listedEvents.isEmpty()) item { EmptyText(if (showArchived) "暂无已归档事件" else "暂无事件") }
+                    items(listedEvents, key = { it.id }) { item ->
                         val rows = rowsByEvent[item.id].orEmpty()
                         val shared = state.publicEvents.find { it.event.eventId == item.id }
                         val balances = publicBalances[item.id].orEmpty()
@@ -211,7 +244,17 @@ fun LedgerScreen(
                         }
                     }
                 } else if (publicBundle != null) {
-                    publicEventContent(publicBundle, publicBalances.getValue(publicBundle.event.eventId), state, settlementTab, { settlementTab = it }, { clearError(); managingMembers = true }) { startPublic(publicBundle, it) }
+                    publicEventContent(publicBundle, publicBalances.getValue(publicBundle.event.eventId), state, settlementTab,
+                        { settlementTab = it }, { clearError(); managingMembers = true },
+                        transfer = { existing, suggestion ->
+                            clearError(); transferEditing = existing != null
+                            val members = publicBundle.members.sortedBy { it.position }
+                            transferInitial = existing?.toDraft() ?: TransferDraft(eventId = event.id,
+                                fromId = suggestion?.from ?: members.first().id,
+                                toId = suggestion?.to ?: members.getOrNull(1)?.id.orEmpty(),
+                                amount = suggestion?.amount?.let { Money.format(it) }.orEmpty())
+                            transferOpen = true
+                        }, share = { sharingBill = true }) { startPublic(publicBundle, it) }
                 } else {
                     item { TotalCard(eventRows, "事件累计支出", showIncome = false) }
                     item { CategoryBreakdown(eventRows, state.categories, allowIncome = false) }
@@ -226,6 +269,27 @@ fun LedgerScreen(
         }
     }
 
+    if (event != null && !state.loading) {
+        if (renaming) editorStates.SaveableStateProvider("rename-${event.id}") {
+            RenameEventDialog(event, state,
+                { renaming = false; editorStates.removeState("rename-${event.id}"); clearError() },
+                { name -> renameEvent(event.id, name) { renaming = false; editorStates.removeState("rename-${event.id}") } })
+        }
+        if (archiving) AlertDialog(onDismissRequest = { if (!state.saving) archiving = false },
+            title = { Text(if (publicBalances[event.id]?.any { it.balance != 0L } == true) "尚未结清，仍要归档？" else "归档事件？") },
+            text = { Column { Text("归档后保留统计，编辑前需取消归档。"); state.error?.let { ErrorText(it) } } },
+            confirmButton = { TextButton(enabled = !state.saving, onClick = { archiveEvent(event.id, true, true) { archiving = false } }) { Text("确认归档") } },
+            dismissButton = { TextButton(enabled = !state.saving, onClick = { archiving = false }) { Text("取消") } })
+        if (sharingBill && publicBundle != null) EventBillDialog(event, publicBundle, state.categories) { sharingBill = false }
+    }
+    val transferBundle = state.publicEvents.find { it.event.eventId == transferInitial.eventId }
+    if (transferOpen && transferBundle != null && !state.loading) editorStates.SaveableStateProvider("transfer-${transferInitial.id}") {
+        fun closeTransfer() { transferOpen = false; editorStates.removeState("transfer-${transferInitial.id}"); clearError() }
+        TransferEditor(transferInitial, transferEditing, transferBundle, state,
+            close = { if (!state.saving) closeTransfer() },
+            save = { draft, confirmed -> saveTransfer(draft, confirmed) { closeTransfer() } },
+            delete = { deleteTransfer(transferInitial.eventId, transferInitial.id) { closeTransfer() } })
+    }
     if (filterOpen) FilterDialog(filter, state, { filterOpen = false }) { filter = it; filtering = true }
     if (editorOpen && !state.loading) editorStates.SaveableStateProvider("entry") {
         val existing = state.rows.find { it.entry.id == editingId }?.entry

@@ -19,7 +19,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 
 fun LazyListScope.publicEventContent(bundle: PublicBundle, balances: List<MemberBalance>, state: LedgerState, settlement: Boolean,
-    selectTab: (Boolean) -> Unit, members: () -> Unit, edit: (SharedExpense) -> Unit) {
+    selectTab: (Boolean) -> Unit, members: () -> Unit, transfer: (EventTransfer?, Settlement?) -> Unit, share: () -> Unit, edit: (SharedExpense) -> Unit) {
+    val archived = state.events.find { it.id == bundle.event.eventId }?.archived == true
     val total = balances.fold(0L) { sum, b -> Math.addExact(sum, b.paid) }
     item {
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)) {
@@ -38,26 +39,41 @@ fun LazyListScope.publicEventContent(bundle: PublicBundle, balances: List<Member
         }
     }
     if (settlement) {
-        if (bundle.expenses.isEmpty()) item { Text("暂无待结算费用") }
-        else {
-            items(balances, key = { "balance-${it.member.id}" }) { b ->
-                OutlinedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(b.member.name, style = MaterialTheme.typography.titleMedium)
-                        Text("应承担 ¥ ${Money.format(b.share)}")
-                        Text("已付 ¥ ${Money.format(b.paid)}")
-                        Text(if (b.balance == 0L) "无需转账" else "${if (b.balance > 0) "应收" else "应付"} ¥ ${Money.format(kotlin.math.abs(b.balance))}", color = MaterialTheme.colorScheme.primary)
-                    }
+        item { Text(bundle.settlementStatus(), style = MaterialTheme.typography.titleMedium) }
+        items(balances, key = { "balance-${it.member.id}" }) { b ->
+            OutlinedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(b.member.name, style = MaterialTheme.typography.titleMedium)
+                    Text("应承担 ¥ ${Money.format(b.share)}")
+                    Text("费用实付 ¥ ${Money.format(b.paid)}")
+                    Text("已转出 ¥ ${Money.format(b.sent)} · 已收到 ¥ ${Money.format(b.received)}")
+                    Text(if (b.balance == 0L) "无需转账" else "${if (b.balance > 0) "应收" else "应付"} ¥ ${Money.format(kotlin.math.abs(b.balance))}", color = MaterialTheme.colorScheme.primary)
                 }
             }
-            item { Text("转账建议", style = MaterialTheme.typography.titleMedium) }
-            val transfers = settlements(balances)
-            if (transfers.isEmpty()) item { Text("无需转账") }
-            items(transfers) { t ->
-                Text("${bundle.members.single { it.id == t.from }.name} → ${bundle.members.single { it.id == t.to }.name}  ¥ ${Money.format(t.amount)}")
-            }
-            item { Text("未扣除成员间已转账", style = MaterialTheme.typography.bodySmall) }
         }
+        item { Text("转账建议", style = MaterialTheme.typography.titleMedium) }
+        val suggestions = settlements(balances)
+        if (suggestions.isEmpty()) item { Text("无需转账") }
+        items(suggestions) { t ->
+            OutlinedCard(onClick = { transfer(null, t) }, enabled = !archived && !state.saving, modifier = Modifier.fillMaxWidth()) {
+                Text("${bundle.members.single { it.id == t.from }.name} → ${bundle.members.single { it.id == t.to }.name}  ¥ ${Money.format(t.amount)}", Modifier.padding(16.dp))
+            }
+        }
+        item { Text("实际转账", style = MaterialTheme.typography.titleMedium) }
+        if (bundle.transfers.isEmpty()) item { Text("暂无转账") }
+        items(bundle.transfers.sortedWith(compareByDescending<EventTransfer> { it.occurredOn }.thenBy { it.id }), key = { "transfer-${it.id}" }) { t ->
+            OutlinedCard(onClick = { transfer(t, null) }, modifier = Modifier.fillMaxWidth().testTag("transfer-${t.id}")) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${bundle.members.single { it.id == t.fromId }.name} → ${bundle.members.single { it.id == t.toId }.name} · ¥ ${Money.format(t.amountMinor)}")
+                    Text(t.occurredOn)
+                    if (t.note.isNotBlank()) Text(t.note)
+                }
+            }
+        }
+        item { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!archived) Button(enabled = !state.saving && bundle.members.size >= 2, onClick = { transfer(null, null) }) { Text("记录转账") }
+            OutlinedButton(onClick = share) { Text("分享账单") }
+        } }
     } else {
         if (bundle.expenses.isEmpty()) item { Text("暂无开支") }
         bundle.expenses.sortedWith(compareByDescending<SharedExpense> { it.expense.occurredOn }.thenBy { it.expense.id }).groupBy { it.expense.occurredOn }.forEach { (date, rows) ->
@@ -91,6 +107,8 @@ fun LazyListScope.publicEventContent(bundle: PublicBundle, balances: List<Member
 @Composable
 fun PublicExpenseEditor(initial: EntryDraft, existing: SharedExpense?, bundle: PublicBundle, state: LedgerState,
     close: () -> Unit, save: (PublicDraft) -> Unit, delete: () -> Unit) {
+    val archived = state.events.find { it.id == bundle.event.eventId }?.archived == true
+    val canEdit = !state.saving && !archived
     var amount by rememberSaveable { mutableStateOf(initial.amount) }
     var currency by rememberSaveable { mutableStateOf(initial.currency) }
     var rmb by rememberSaveable { mutableStateOf(initial.rmb) }
@@ -117,17 +135,18 @@ fun PublicExpenseEditor(initial: EntryDraft, existing: SharedExpense?, bundle: P
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         text = {
             Column(Modifier.heightIn(max = 540.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(amount, { amount = it }, label = { Text(if (currency == "CNY") "项目总额" else "原币总额") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = !state.saving)
-                ChoiceField("币种", currency, MoneyCurrency.entries.map { it.name to "${it.name} · ${it.label}" }, !state.saving) { currency = it }
-                if (currency != "CNY") OutlinedTextField(rmb, { rmb = it }, label = { Text("人民币总额") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = !state.saving)
-                OutlinedButton(onClick = { picking = true }, enabled = !state.saving) { Text("分类：${state.categories.find { it.id == category }?.name ?: "请选择"}") }
-                ChoiceField("付款人", bundle.members.find { it.id == payer }?.name.orEmpty(), bundle.members.sortedBy { it.position }.map { it.id to it.name }, !state.saving) { payer = it }
+                if (archived) Text("事件已归档，请先取消归档")
+                OutlinedTextField(amount, { amount = it }, label = { Text(if (currency == "CNY") "项目总额" else "原币总额") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = canEdit)
+                ChoiceField("币种", currency, MoneyCurrency.entries.map { it.name to "${it.name} · ${it.label}" }, canEdit) { currency = it }
+                if (currency != "CNY") OutlinedTextField(rmb, { rmb = it }, label = { Text("人民币总额") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = canEdit)
+                OutlinedButton(onClick = { picking = true }, enabled = canEdit) { Text("分类：${state.categories.find { it.id == category }?.name ?: "请选择"}") }
+                ChoiceField("付款人", bundle.members.find { it.id == payer }?.name.orEmpty(), bundle.members.sortedBy { it.position }.map { it.id to it.name }, canEdit) { payer = it }
                 Text("参与者", style = MaterialTheme.typography.labelLarge)
-                TextButton(onClick = { selected = bundle.members.map { it.id } }, enabled = !state.saving) { Text("全选") }
+                TextButton(onClick = { selected = bundle.members.map { it.id } }, enabled = canEdit) { Text("全选") }
                 bundle.members.sortedBy { it.position }.forEach { m ->
-                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("participant-${m.id}").toggleable(value = m.id in selected, enabled = !state.saving, role = Role.Checkbox,
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("participant-${m.id}").toggleable(value = m.id in selected, enabled = canEdit, role = Role.Checkbox,
                         onValueChange = { checked -> selected = if (checked) selected + m.id else selected - m.id }), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(m.id in selected, null, enabled = !state.saving)
+                        Checkbox(m.id in selected, null, enabled = canEdit)
                         Text(m.name, Modifier.weight(1f))
                     }
                 }
@@ -139,21 +158,23 @@ fun PublicExpenseEditor(initial: EntryDraft, existing: SharedExpense?, bundle: P
                     if (preview.second.values.distinct().size > 1 || preview.first.values.distinct().size > 1) Text("尾差已分配", style = MaterialTheme.typography.bodySmall)
                     Text("我的支出 ¥ ${Money.format(preview.second[bundle.members.single { it.isSelf }.id] ?: 0L)}", color = MaterialTheme.colorScheme.primary)
                 }
-                LedgerDateField("日期", date, !state.saving) { date = it }
-                OutlinedTextField(note, { note = it }, label = { Text("备注（可选）") }, enabled = !state.saving, maxLines = 3)
+                LedgerDateField("日期", date, canEdit) { date = it }
+                OutlinedTextField(note, { note = it }, label = { Text("备注（可选）") }, enabled = canEdit, maxLines = 3)
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (existing != null) TextButton(onClick = { confirming = true }, enabled = !state.saving) { Text("删除公共开支", color = MaterialTheme.colorScheme.error) }
+                if (existing != null && !archived) TextButton(onClick = { confirming = true }, enabled = canEdit) { Text("删除公共开支", color = MaterialTheme.colorScheme.error) }
             }
-        }, confirmButton = { Button(enabled = !state.saving, onClick = { save(PublicDraft(initial.copy(kind = "expense", amount = amount, currency = currency, rmb = rmb, categoryId = category, date = date, note = note, eventId = bundle.event.eventId), payer, selected.toSet())) }) { Text("保存") } },
+        }, confirmButton = { Button(enabled = canEdit, onClick = { save(PublicDraft(initial.copy(kind = "expense", amount = amount, currency = currency, rmb = rmb, categoryId = category, date = date, note = note, eventId = bundle.event.eventId), payer, selected.toSet())) }) { Text("保存") } },
         dismissButton = { TextButton(enabled = !state.saving, onClick = requestClose) { Text("取消") } })
     if (picking) CategoryPicker(state, category, initial.categoryId, { picking = false }) { category = it }
     if (confirming) AlertDialog(onDismissRequest = { if (!state.saving) confirming = false }, title = { Text("删除整笔公共开支？") }, text = { Text("将同步更新所有人的分摊。") },
-        confirmButton = { TextButton(enabled = !state.saving, onClick = delete) { Text("确认删除") } }, dismissButton = { TextButton(enabled = !state.saving, onClick = { confirming = false }) { Text("取消") } })
+        confirmButton = { TextButton(enabled = canEdit, onClick = delete) { Text("确认删除") } }, dismissButton = { TextButton(enabled = canEdit, onClick = { confirming = false }) { Text("取消") } })
 }
 
 @Composable
 fun PublicMembersDialog(bundle: PublicBundle, state: LedgerState, close: () -> Unit,
     save: (String?, String, () -> Unit) -> Unit, delete: (String) -> Unit) {
+    val archived = state.events.find { it.id == bundle.event.eventId }?.archived == true
+    val canEdit = !state.saving && !archived
     var editing by rememberSaveable { mutableStateOf<String?>(null) }
     var name by rememberSaveable { mutableStateOf("") }
     val requestClose = rememberDiscardChanges(name.isNotEmpty(), state.saving, close)
@@ -162,13 +183,13 @@ fun PublicMembersDialog(bundle: PublicBundle, state: LedgerState, close: () -> U
         text = { Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             bundle.members.sortedBy { it.position }.forEach { m ->
                 Text(m.name, style = MaterialTheme.typography.titleMedium)
-                if (!m.isSelf) Row {
-                    TextButton(enabled = !state.saving, onClick = { editing = m.id; name = m.name }) { Text("改名") }
-                    TextButton(enabled = !state.saving, onClick = { delete(m.id); if (editing == m.id) { editing = null; name = "" } }) { Text("移除") }
+                if (!m.isSelf && !archived) Row {
+                    TextButton(enabled = canEdit, onClick = { editing = m.id; name = m.name }) { Text("改名") }
+                    TextButton(enabled = canEdit, onClick = { delete(m.id); if (editing == m.id) { editing = null; name = "" } }) { Text("移除") }
                 }
             }
-            OutlinedTextField(name, { name = it }, label = { Text(if (editing == null) "同行者昵称" else "新昵称") }, singleLine = true, enabled = !state.saving)
-            Button(enabled = !state.saving, onClick = { save(editing, name) { name = ""; editing = null } }) { Text(if (editing == null) "添加" else "保存昵称") }
+            OutlinedTextField(name, { name = it }, label = { Text(if (editing == null) "同行者昵称" else "新昵称") }, singleLine = true, enabled = canEdit)
+            Button(enabled = canEdit, onClick = { save(editing, name) { name = ""; editing = null } }) { Text(if (editing == null) "添加" else "保存昵称") }
             if (editing != null) TextButton(onClick = { editing = null; name = "" }) { Text("取消改名") }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         } }, confirmButton = { TextButton(enabled = !state.saving, onClick = requestClose) { Text("完成") } })

@@ -19,6 +19,7 @@ data class Category(
 data class LedgerEvent(
     @PrimaryKey val id: String,
     val name: String,
+    @ColumnInfo(defaultValue = "0") val archived: Boolean = false,
 )
 
 @Entity(tableName = "hidden_categories")
@@ -118,6 +119,15 @@ interface LedgerDao {
     @Query("SELECT * FROM events WHERE id = :id")
     suspend fun event(id: String): LedgerEvent?
 
+    @Query("SELECT * FROM entries WHERE id = :id")
+    suspend fun entry(id: String): LedgerEntry?
+
+    @Query("UPDATE events SET name = :name WHERE id = :id")
+    suspend fun renameEvent(id: String, name: String)
+
+    @Query("UPDATE events SET archived = :archived WHERE id = :id")
+    suspend fun archiveEvent(id: String, archived: Boolean)
+
     @Query("SELECT COUNT(*) FROM public_events WHERE eventId = :id")
     suspend fun isPublic(id: String): Int
 
@@ -138,7 +148,7 @@ interface LedgerDao {
     suspend fun deleteEntry(id: String)
 }
 
-@Database(entities = [Category::class, LedgerEvent::class, LedgerEntry::class, HiddenCategory::class, PublicEvent::class, EventMember::class, PublicExpense::class, ExpenseMember::class], version = 3, exportSchema = true)
+@Database(entities = [Category::class, LedgerEvent::class, LedgerEntry::class, HiddenCategory::class, PublicEvent::class, EventMember::class, PublicExpense::class, ExpenseMember::class, EventTransfer::class], version = 4, exportSchema = true)
 abstract class LedgerDatabase : RoomDatabase() {
     abstract fun dao(): LedgerDao
     abstract fun publicDao(): PublicDao
@@ -154,9 +164,15 @@ abstract class LedgerDatabase : RoomDatabase() {
                 publicSchema.forEach { db.execSQL(it) }
             }
         }
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE events ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+                transferSchema.forEach { db.execSQL(it) }
+            }
+        }
         fun open(context: Context, name: String = "ledger.db"): LedgerDatabase =
             Room.databaseBuilder(context.applicationContext, LedgerDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
     }
 }
 

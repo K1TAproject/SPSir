@@ -29,10 +29,16 @@ data class SharedExpense(@Embedded val expense: PublicExpense,
     @Relation(parentColumn = "id", entityColumn = "expenseId") val participants: List<ExpenseMember>)
 data class PublicBundle(@Embedded val event: PublicEvent,
     @Relation(parentColumn = "eventId", entityColumn = "eventId") val members: List<EventMember>,
-    @Relation(entity = PublicExpense::class, parentColumn = "eventId", entityColumn = "eventId") val expenses: List<SharedExpense>)
+    @Relation(entity = PublicExpense::class, parentColumn = "eventId", entityColumn = "eventId") val expenses: List<SharedExpense>,
+    @Relation(parentColumn = "eventId", entityColumn = "eventId") val transfers: List<EventTransfer> = emptyList())
 
 @Dao
 interface PublicDao {
+    @Upsert suspend fun transfer(transfer: EventTransfer)
+    @Query("SELECT * FROM event_transfers WHERE id = :id") suspend fun transferById(id: String): EventTransfer?
+    @Query("DELETE FROM event_transfers WHERE id = :id") suspend fun deleteTransfer(id: String)
+    @Query("DELETE FROM event_transfers") suspend fun clearTransfers()
+
     @Transaction @Query("SELECT * FROM public_events ORDER BY eventId") suspend fun all(): List<PublicBundle>
     @Transaction @Query("SELECT * FROM public_events WHERE eventId = :id") suspend fun bundle(id: String): PublicBundle?
     @Query("SELECT * FROM public_expenses WHERE entryId = :id") suspend fun fromEntry(id: String): PublicExpense?
@@ -72,7 +78,9 @@ fun PublicBundle.personalEntry(row: SharedExpense, id: String): LedgerEntry? {
     return LedgerEntry(id, "expense", original, e.currency, rmb, e.categoryId, e.eventId, e.occurredOn, e.note)
 }
 
-data class MemberBalance(val member: EventMember, val paid: Long, val share: Long) { val balance: Long get() = Math.subtractExact(paid, share) }
+data class MemberBalance(val member: EventMember, val paid: Long, val share: Long, val sent: Long = 0, val received: Long = 0) {
+    val balance: Long get() = Math.subtractExact(Math.addExact(Math.subtractExact(paid, share), sent), received)
+}
 data class Settlement(val from: String, val to: String, val amount: Long)
 fun PublicBundle.balances(): List<MemberBalance> {
     val paid = members.associate { it.id to 0L }.toMutableMap()
@@ -82,7 +90,15 @@ fun PublicBundle.balances(): List<MemberBalance> {
         paid[e.payerId] = Math.addExact(paid.getValue(e.payerId), e.rmbMinor)
         row.shares(this).forEach { (id, value) -> owed[id] = Math.addExact(owed.getValue(id), value) }
     }
-    return members.sortedBy { it.position }.map { MemberBalance(it, paid.getValue(it.id), owed.getValue(it.id)) }
+    val sent = members.associate { it.id to 0L }.toMutableMap()
+    val received = sent.toMutableMap()
+    transfers.forEach { t ->
+        sent[t.fromId] = Math.addExact(sent.getValue(t.fromId), t.amountMinor)
+        received[t.toId] = Math.addExact(received.getValue(t.toId), t.amountMinor)
+    }
+    return members.sortedBy { it.position }.map {
+        MemberBalance(it, paid.getValue(it.id), owed.getValue(it.id), sent.getValue(it.id), received.getValue(it.id)).also { b -> b.balance }
+    }
 }
 fun settlements(balances: List<MemberBalance>): List<Settlement> {
     require(balances.fold(0L) { sum, b -> Math.addExact(sum, b.balance) } == 0L)
@@ -112,6 +128,7 @@ class PublicRepository(private val db: LedgerDatabase) {
         normalized.forEachIndexed { index, n -> db.publicDao().member(EventMember(UUID.randomUUID().toString(), id, n, index == 0, index)) }
     }
     suspend fun member(eventId: String, id: String?, name: String) = db.withTransaction {
+        db.dao().requireWritableEvent(eventId)
         val bundle = requireNotNull(db.publicDao().bundle(eventId)) { "事件不存在" }
         val old = id?.let { key -> requireNotNull(bundle.members.find { it.id == key }) }
         require(old?.isSelf != true) { "不能修改本人身份" }
@@ -120,13 +137,16 @@ class PublicRepository(private val db: LedgerDatabase) {
         db.publicDao().member(old?.copy(name = value) ?: EventMember(UUID.randomUUID().toString(), eventId, value, false, Math.addExact(bundle.members.maxOf { it.position }, 1)))
     }
     suspend fun deleteMember(eventId: String, id: String) = db.withTransaction {
+        db.dao().requireWritableEvent(eventId)
         val bundle = requireNotNull(db.publicDao().bundle(eventId))
         require(bundle.members.any { it.id == id && !it.isSelf }) { "不能删除本人" }
         require(bundle.expenses.none { it.expense.payerId == id || it.participants.any { p -> p.memberId == id } }) { "该成员有关联开支" }
+        require(bundle.transfers.none { it.fromId == id || it.toId == id }) { "该成员有关联转账" }
         db.publicDao().deleteMember(id)
     }
     suspend fun save(draft: PublicDraft) = db.withTransaction {
         val d = draft.entry
+        db.dao().requireWritableEvent(d.eventId)
         val bundle = requireNotNull(d.eventId?.let { db.publicDao().bundle(it) }) { "请选择公共事件" }
         require(d.kind == "expense") { "公共事件仅支持支出" }
         require(bundle.members.any { it.id == draft.payerId }) { "请选择付款人" }
@@ -149,6 +169,7 @@ class PublicRepository(private val db: LedgerDatabase) {
         if (personal == null) old?.entryId?.let { db.dao().deleteEntry(it) }
     }
     suspend fun delete(eventId: String, id: String) = db.withTransaction {
+        db.dao().requireWritableEvent(eventId)
         val old = requireNotNull(db.publicDao().bundle(eventId)?.expenses?.find { it.expense.id == id }) { "开支不存在" }
         db.publicDao().deleteExpense(id)
         old.expense.entryId?.let { db.dao().deleteEntry(it) }

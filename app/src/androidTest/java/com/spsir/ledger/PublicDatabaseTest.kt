@@ -99,7 +99,7 @@ class PublicDatabaseTest {
         try {
             assertEquals(123L,db.dao().allEntries().single().rmbMinor); assertEquals("old",db.dao().allEntries().single().eventId)
             assertEquals("food",db.dao().allHidden().single().categoryId); assertTrue(db.publicDao().all().isEmpty())
-            assertEquals(3,db.openHelper.readableDatabase.version)
+            assertEquals(4,db.openHelper.readableDatabase.version)
         } finally { db.close(); context.deleteDatabase(name) }
     }
 }

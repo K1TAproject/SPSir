@@ -51,6 +51,8 @@ fun LedgerEntry.toDraft() = EntryDraft(
 
 class LedgerRepository(private val dao: LedgerDao) {
     suspend fun save(draft: EntryDraft) {
+        dao.requireWritableEvent(dao.entry(draft.id)?.eventId)
+        dao.requireWritableEvent(draft.eventId)
         require(dao.isDerived(draft.id) == 0) { "请在公共开支中编辑" }
         require(draft.eventId == null || dao.isPublic(draft.eventId) == 0) { "请使用公共开支表单" }
         require(draft.kind in listOf("expense", "income")) { "收支类型无效" }
@@ -68,6 +70,11 @@ class LedgerRepository(private val dao: LedgerDao) {
             category.id, eventId, Money.date(draft.date), draft.note.trim()))
     }
 
+    suspend fun delete(id: String) {
+        dao.requireWritableEvent(dao.entry(id)?.eventId)
+        dao.deleteEntry(id)
+    }
+
     suspend fun createEvent(name: String) {
         val trimmed = name.trim()
         require(trimmed.isNotEmpty() && trimmed.length <= 40) { "事件名称请填写 1～40 字" }
@@ -80,6 +87,7 @@ fun expenseTotal(rows: List<LedgerRow>): Long = rows.filter { it.entry.kind == "
 class LedgerViewModel(application: Application) : AndroidViewModel(application) {
     private val db = LedgerDatabase.open(application)
     private val publicRepository = PublicRepository(db)
+    private val eventRepository = EventRepository(db)
     private val repository = LedgerRepository(db.dao())
     private val backups = BackupStore(db, File(application.filesDir, "before-restore.json"))
     private val mutableState = MutableStateFlow(LedgerState())
@@ -90,7 +98,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 db.dao().seed(presetCategories())
                 db.invalidationTracker.createFlow("categories", "events", "entries", "hidden_categories",
-                    "public_events", "event_members", "public_expenses", "expense_members")
+                    "public_events", "event_members", "public_expenses", "expense_members", "event_transfers")
                     .map { db.readLedgerState() }.flowOn(Dispatchers.IO).collect { snapshot ->
                         mutableState.update { snapshot.copy(saving = it.saving, error = it.error,
                             message = it.message, backupPreview = it.backupPreview) }
@@ -104,6 +112,11 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun renameEvent(id: String, name: String, done: () -> Unit) = mutate(done) { eventRepository.rename(id, name) }
+    fun archiveEvent(id: String, archived: Boolean, confirmed: Boolean, done: () -> Unit) = mutate(done) { eventRepository.archive(id, archived, confirmed) }
+    fun saveTransfer(draft: TransferDraft, confirmed: Boolean, done: () -> Unit) = mutate(done) { eventRepository.save(draft, confirmed) }
+    fun deleteTransfer(event: String, id: String, done: () -> Unit) = mutate(done) { eventRepository.delete(event, id) }
+
     fun createPublic(name: String, names: List<String>, done: () -> Unit) = mutate(done) { publicRepository.create(name, names) }
     fun savePublic(draft: PublicDraft, done: () -> Unit) = mutate(done) { publicRepository.save(draft) }
     fun deletePublic(event: String, id: String, done: () -> Unit) = mutate(done) { publicRepository.delete(event, id) }
@@ -111,11 +124,11 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteMember(event: String, id: String) = mutate({}) { publicRepository.deleteMember(event, id) }
 
     fun clearError() = mutableState.update { it.copy(error = null) }
-    fun save(draft: EntryDraft, done: () -> Unit) = mutate(done) { repository.save(draft) }
+    fun save(draft: EntryDraft, done: () -> Unit) = mutate(done) { db.withTransaction { repository.save(draft) } }
     fun createEvent(name: String, done: () -> Unit) = mutate(done) { repository.createEvent(name) }
-    fun delete(id: String, done: () -> Unit) = mutate(done) { val source = db.publicDao().fromEntry(id)
-        if (source != null) publicRepository.delete(source.eventId, source.id) else db.dao().deleteEntry(id)
-    }
+    fun delete(id: String, done: () -> Unit) = mutate(done) { db.withTransaction { val source = db.publicDao().fromEntry(id)
+        if (source != null) publicRepository.delete(source.eventId, source.id) else repository.delete(id)
+    } }
     fun setCategoryHidden(id: String, hidden: Boolean) = mutate({}) {
         require(db.dao().category(id)?.kind == "expense") { "请选择支出分类" }
         if (hidden) db.dao().hide(HiddenCategory(id)) else db.dao().showCategory(id)

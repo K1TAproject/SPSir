@@ -40,12 +40,12 @@ object BackupJson {
     }
 
     fun encode(data: LedgerBackup): String = JSONObject().apply {
-        put("format", "SPSir"); put("version", 2); put("exportedAt", data.exportedAt)
+        put("format", "SPSir"); put("version", 3); put("exportedAt", data.exportedAt)
         put("categories", JSONArray().apply { data.categories.forEach { c -> put(JSONObject().apply {
             put("id", c.id); put("name", c.name); put("parentId", c.parentId ?: JSONObject.NULL)
             put("kind", c.kind); put("sortOrder", c.sortOrder)
         }) } })
-        put("events", JSONArray().apply { data.events.forEach { e -> put(JSONObject().put("id", e.id).put("name", e.name)) } })
+        put("events", JSONArray().apply { data.events.forEach { e -> put(JSONObject().put("id", e.id).put("name", e.name).put("archived", e.archived)) } })
         put("entries", JSONArray().apply { data.entries.forEach { e -> put(JSONObject().apply {
             put("id", e.id); put("kind", e.kind); put("originalMinor", e.originalMinor); put("currency", e.currency)
             put("rmbMinor", e.rmbMinor); put("categoryId", e.categoryId); put("eventId", e.eventId ?: JSONObject.NULL)
@@ -54,6 +54,10 @@ object BackupJson {
         put("hiddenCategories", JSONArray(data.hidden.map { it.categoryId }))
         put("publicEvents", JSONArray().apply { data.publicEvents.forEach { bundle -> put(JSONObject().apply {
             put("eventId", bundle.event.eventId)
+            put("transfers", JSONArray().apply { bundle.transfers.forEach { t -> put(JSONObject().apply {
+                put("id", t.id); put("eventId", t.eventId); put("fromId", t.fromId); put("toId", t.toId)
+                put("amountMinor", t.amountMinor); put("occurredOn", t.occurredOn); put("note", t.note)
+            }) } })
             put("members", JSONArray().apply { bundle.members.forEach { m -> put(JSONObject().apply {
                 put("id", m.id); put("eventId", m.eventId); put("name", m.name); put("isSelf", m.isSelf); put("position", m.position)
             }) } })
@@ -70,7 +74,7 @@ object BackupJson {
     fun decode(text: String): LedgerBackup {
         try {
             val root = JSONObject(text)
-            require(root.string("format") == "SPSir" && root.integer("version") in 1L..2L) { "不支持的备份格式或版本" }
+            require(root.string("format") == "SPSir" && root.integer("version") in 1L..3L) { "不支持的备份格式或版本" }
             fun <T> objects(key: String, read: (JSONObject) -> T): List<T> {
                 val array = root.getJSONArray(key)
                 return (0 until array.length()).map { read(array.getJSONObject(it)) }
@@ -81,7 +85,7 @@ object BackupJson {
                     require(order in Int.MIN_VALUE..Int.MAX_VALUE) { "分类排序无效" }
                     Category(c.string("id"), c.string("name"), c.optionalId("parentId"), c.string("kind"), order.toInt())
                 },
-                objects("events") { LedgerEvent(it.string("id"), it.string("name")) },
+                objects("events") { LedgerEvent(it.string("id"), it.string("name"), if (root.integer("version") < 3L) false else it.boolean("archived")) },
                 objects("entries") { e -> LedgerEntry(e.string("id"), e.string("kind"), e.integer("originalMinor"),
                     e.string("currency"), e.integer("rmbMinor"), e.string("categoryId"), e.optionalId("eventId"), e.string("occurredOn"), e.string("note")) },
                 root.getJSONArray("hiddenCategories").let { a -> (0 until a.length()).map {
@@ -103,7 +107,11 @@ object BackupJson {
                         } }
                         SharedExpense(expense, participants)
                     } }
-                    PublicBundle(PublicEvent(b.string("eventId")), members, expenses)
+                    val transfers = if (root.integer("version") < 3L) emptyList() else b.getJSONArray("transfers").let { a -> (0 until a.length()).map { i ->
+                        val t = a.getJSONObject(i)
+                        EventTransfer(t.string("id"), t.string("eventId"), t.string("fromId"), t.string("toId"), t.integer("amountMinor"), t.string("occurredOn"), t.string("note"))
+                    } }
+                    PublicBundle(PublicEvent(b.string("eventId")), members, expenses, transfers)
                 },
             )
             validate(data)
@@ -144,6 +152,9 @@ object BackupJson {
         }
     }
 
+    private fun JSONObject.boolean(key: String): Boolean {
+        val value = get(key); require(value is Boolean) { "字段 $key 必须为布尔值" }; return value
+    }
     private fun JSONObject.string(key: String): String {
         val value = get(key); require(value is String) { "字段 $key 必须为文本" }; return value
     }
@@ -170,7 +181,7 @@ class BackupStore(private val db: LedgerDatabase, private val safetyFile: File) 
             try { stream.write(previous); file.finishWrite(stream) }
             catch (e: Exception) { file.failWrite(stream); throw e }
             check(file.openRead().use { it.readBytes() }.contentEquals(previous)) { "覆盖前副本校验失败" }
-            db.publicDao().clearParticipants(); db.publicDao().clearExpenses(); db.publicDao().clearMembers(); db.publicDao().clearEvents()
+            db.publicDao().clearTransfers(); db.publicDao().clearParticipants(); db.publicDao().clearExpenses(); db.publicDao().clearMembers(); db.publicDao().clearEvents()
             db.dao().clearEntries(); db.dao().clearEvents(); db.dao().clearHidden(); db.dao().clearCategories()
             db.dao().seed(data.categories)
             db.dao().insertEvents(data.events)
@@ -179,6 +190,7 @@ class BackupStore(private val db: LedgerDatabase, private val safetyFile: File) 
                 db.publicDao().insertEvent(b.event)
                 b.members.forEach { db.publicDao().member(it) }
                 b.expenses.forEach { row -> db.publicDao().expense(row.expense); db.publicDao().participants(row.participants) }
+                b.transfers.forEach { db.publicDao().transfer(it) }
             }
             data.hidden.forEach { db.dao().hide(it) }
             // A supported older backup may omit newly introduced presets.
@@ -197,6 +209,7 @@ fun validatePublicBackup(data: LedgerBackup): Set<String> {
     val memberIds = mutableSetOf<String>()
     val expenseIds = mutableSetOf<String>()
     val entryIds = mutableSetOf<String>()
+    val transferIds = mutableSetOf<String>()
     val entries = data.entries.associateBy { it.id }
     data.publicEvents.forEach { bundle ->
         val event = bundle.event.eventId
@@ -222,7 +235,11 @@ fun validatePublicBackup(data: LedgerBackup): Set<String> {
             if (expected == null) require(e.entryId == null) { "零份额不应关联流水" }
             else require(e.entryId != null && entryIds.add(e.entryId) && entries[e.entryId] == expected) { "公共开支与个人流水不一致" }
         }
-        bundle.balances() // Checked arithmetic also validates aggregate overflow.
+        bundle.transfers.forEach { t ->
+            require(transferIds.add(t.id)) { "转账 ID 重复" }
+            validateTransfer(t, bundle)
+        }
+        settlements(bundle.balances()) // Check aggregate overflow and conservation.
     }
     require(data.entries.none { it.eventId in eventIds && it.id !in entryIds }) { "公共事件存在未关联流水" }
     return entryIds

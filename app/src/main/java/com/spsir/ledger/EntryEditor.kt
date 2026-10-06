@@ -36,6 +36,8 @@ fun rememberDiscardChanges(changed: Boolean, saving: Boolean, close: () -> Unit)
 
 @Composable
 fun EntryEditor(initial: EntryDraft, editing: Boolean, state: LedgerState, dismiss: () -> Unit, save: (EntryDraft) -> Unit, delete: (String) -> Unit, openPublic: (EntryDraft) -> Unit) {
+    val archived = state.events.find { it.id == initial.eventId }?.archived == true
+    val canEdit = !state.saving && !archived
     val baseline by rememberSaveable(stateSaver = entryDraftSaver) { mutableStateOf(initial) }
     val id by rememberSaveable { mutableStateOf(initial.id) }
     var kind by rememberSaveable { mutableStateOf(initial.kind) }
@@ -61,41 +63,42 @@ fun EntryEditor(initial: EntryDraft, editing: Boolean, state: LedgerState, dismi
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (archived) Text("事件已归档，请先取消归档")
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     listOf("expense" to "支出", "income" to "收入").forEach { (key, label) ->
-                        FilterChip(selected = kind == key, enabled = !state.saving, onClick = {
+                        FilterChip(selected = kind == key, enabled = canEdit, onClick = {
                             kind = key; categoryId = if (key == "income") "income" else defaultCategory
                             if (key == "income") eventId = null
                         }, label = { Text(label) })
                     }
                 }
-                OutlinedTextField(amount, { amount = it }, label = { Text(if (currency == "CNY") "金额（人民币）" else "原币金额（$currency）") }, modifier = Modifier.fillMaxWidth(), textStyle = MaterialTheme.typography.headlineSmall, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = !state.saving)
-                ChoiceField("币种", "$currency · ${MoneyCurrency.valueOf(currency).label}", MoneyCurrency.entries.map { it.name to "${it.name} · ${it.label}" }, !state.saving) { currency = it }
+                OutlinedTextField(amount, { amount = it }, label = { Text(if (currency == "CNY") "金额（人民币）" else "原币金额（$currency）") }, modifier = Modifier.fillMaxWidth(), textStyle = MaterialTheme.typography.headlineSmall, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = canEdit)
+                ChoiceField("币种", "$currency · ${MoneyCurrency.valueOf(currency).label}", MoneyCurrency.entries.map { it.name to "${it.name} · ${it.label}" }, canEdit) { currency = it }
                 if (currency != "CNY") {
-                    OutlinedTextField(rmb, { rmb = it }, label = { Text("人民币金额") }, modifier = Modifier.fillMaxWidth(), textStyle = MaterialTheme.typography.headlineSmall, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = !state.saving)
+                    OutlinedTextField(rmb, { rmb = it }, label = { Text("人民币金额") }, modifier = Modifier.fillMaxWidth(), textStyle = MaterialTheme.typography.headlineSmall, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = canEdit)
                 }
                 if (kind == "expense") {
-                    OutlinedButton(enabled = !state.saving, onClick = { selectingCategory = true }, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(enabled = canEdit, onClick = { selectingCategory = true }, modifier = Modifier.fillMaxWidth()) {
                         Text("分类：${state.categories.find { it.id == category?.parentId }?.name.orEmpty()} / ${category?.name ?: "请选择"}")
                     }
                     if (recent.isNotEmpty()) {
                         Text("最近使用", style = MaterialTheme.typography.labelMedium)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(recent) { c ->
-                            FilterChip(selected = categoryId == c.id, enabled = !state.saving, onClick = { categoryId = c.id }, label = { Text(c.name) })
+                            FilterChip(selected = categoryId == c.id, enabled = canEdit, onClick = { categoryId = c.id }, label = { Text(c.name) })
                         } }
                     }
-                    ChoiceField("关联事件", state.events.find { it.id == eventId }?.name ?: "无事件", listOf("" to "无事件") + state.events.filter { e -> !editing || state.publicEvents.none { it.event.eventId == e.id } }.map { it.id to it.name }, !state.saving) {
+                    ChoiceField("关联事件", state.events.find { it.id == eventId }?.name ?: "无事件", listOf("" to "无事件") + state.events.filter { e -> !e.archived && (!editing || state.publicEvents.none { it.event.eventId == e.id }) }.map { it.id to it.name }, canEdit) {
                         if (state.publicEvents.any { b -> b.event.eventId == it }) openPublic(EntryDraft(id, kind, amount, currency, rmb, categoryId, it, date, note))
                         else eventId = it.ifEmpty { null }
                     }
                 }
-                LedgerDateField("记账日期", date, !state.saving) { date = it }
-                OutlinedTextField(note, { note = it }, label = { Text("备注（可选）") }, maxLines = 3, enabled = !state.saving)
+                LedgerDateField("记账日期", date, canEdit) { date = it }
+                OutlinedTextField(note, { note = it }, label = { Text("备注（可选）") }, maxLines = 3, enabled = canEdit)
                 state.error?.let { ErrorText(it) }
-                if (editing) TextButton(enabled = !state.saving, onClick = { confirmDelete = true }) { Text("删除这笔记录", color = MaterialTheme.colorScheme.error) }
+                if (editing && !archived) TextButton(enabled = canEdit, onClick = { confirmDelete = true }) { Text("删除这笔记录", color = MaterialTheme.colorScheme.error) }
             }
         },
-        confirmButton = { Button(enabled = !state.saving, onClick = { save(EntryDraft(id, kind, amount, currency, rmb, categoryId, eventId, date, note)) }) { Text(if (state.saving) "保存中…" else "保存") } },
+        confirmButton = { Button(enabled = canEdit, onClick = { save(EntryDraft(id, kind, amount, currency, rmb, categoryId, eventId, date, note)) }) { Text(if (state.saving) "保存中…" else "保存") } },
         dismissButton = { TextButton(enabled = !state.saving, onClick = requestClose) { Text("取消") } },
     )
     if (selectingCategory) CategoryPicker(state, categoryId, if (editing) initial.categoryId else null,
@@ -104,8 +107,8 @@ fun EntryEditor(initial: EntryDraft, editing: Boolean, state: LedgerState, dismi
         onDismissRequest = { if (!state.saving) confirmDelete = false },
         title = { Text("删除这笔记录？") },
         text = { Text("删除后无法恢复。") },
-        confirmButton = { TextButton(enabled = !state.saving, onClick = { delete(id) }) { Text("确认删除") } },
-        dismissButton = { TextButton(enabled = !state.saving, onClick = { confirmDelete = false }) { Text("保留") } },
+        confirmButton = { TextButton(enabled = canEdit, onClick = { delete(id) }) { Text("确认删除") } },
+        dismissButton = { TextButton(enabled = canEdit, onClick = { confirmDelete = false }) { Text("保留") } },
     )
 }
 
