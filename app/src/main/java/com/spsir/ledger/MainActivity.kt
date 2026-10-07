@@ -38,10 +38,17 @@ class MainActivity : ComponentActivity() {
             LedgerTheme {
                 val vm: LedgerViewModel = viewModel()
                 val state by vm.state.collectAsStateWithLifecycle()
+                val updates: UpdateViewModel = viewModel()
+                val updateState by updates.state.collectAsStateWithLifecycle()
+                LaunchedEffect(updates) { updates.check() }
                 LedgerScreen(state, vm::save, vm::createEvent, vm::delete, vm::clearError, vm::setCategoryHidden,
                     createPublic = vm::createPublic, savePublic = vm::savePublic, deletePublic = vm::deletePublic,
                     saveMember = vm::saveMember, deleteMember = vm::deleteMember, renameEvent = vm::renameEvent, archiveEvent = vm::archiveEvent,
-                    saveTransfer = vm::saveTransfer, deleteTransfer = vm::deleteTransfer, backupTools = { BackupTools(state, vm) })
+                    saveTransfer = vm::saveTransfer, deleteTransfer = vm::deleteTransfer, backupTools = {
+                        BackupTools(state, vm)
+                        UpdateTools(updateState, updates::automatic) { updates.check(manual = true) }
+                    })
+                UpdatePrompt(updateState.available, updates::dismiss)
             }
         }
     }

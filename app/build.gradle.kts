@@ -1,8 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+}
+
+val releaseProperties = Properties().apply {
+    val config = rootProject.file(".local/release-signing.properties")
+    if (config.exists()) config.inputStream().use { load(it) }
 }
 
 android {
@@ -13,11 +20,25 @@ android {
         applicationId = "com.spsir.ledger"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.4.3"
+        versionCode = 9
+        versionName = "0.4.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
+    signingConfigs {
+        if (releaseProperties.isNotEmpty()) create("distribution") {
+            storeFile = rootProject.file(releaseProperties.getProperty("storeFile"))
+            storePassword = releaseProperties.getProperty("storePassword")
+            keyAlias = releaseProperties.getProperty("keyAlias")
+            keyPassword = releaseProperties.getProperty("keyPassword")
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isDebuggable = false
+            signingConfig = signingConfigs.findByName("distribution")
+        }
+    }
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
