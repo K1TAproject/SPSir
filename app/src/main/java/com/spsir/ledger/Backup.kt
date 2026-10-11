@@ -40,7 +40,7 @@ object BackupJson {
     }
 
     fun encode(data: LedgerBackup): String = JSONObject().apply {
-        put("format", "SPSir"); put("version", 3); put("exportedAt", data.exportedAt)
+        put("format", "SPSir"); put("version", 4); put("exportedAt", data.exportedAt)
         put("categories", JSONArray().apply { data.categories.forEach { c -> put(JSONObject().apply {
             put("id", c.id); put("name", c.name); put("parentId", c.parentId ?: JSONObject.NULL)
             put("kind", c.kind); put("sortOrder", c.sortOrder)
@@ -74,7 +74,7 @@ object BackupJson {
     fun decode(text: String): LedgerBackup {
         try {
             val root = JSONObject(text)
-            require(root.string("format") == "SPSir" && root.integer("version") in 1L..3L) { "不支持的备份格式或版本" }
+            require(root.string("format") == "SPSir" && root.integer("version") in 1L..4L) { "不支持的备份格式或版本" }
             fun <T> objects(key: String, read: (JSONObject) -> T): List<T> {
                 val array = root.getJSONArray(key)
                 return (0 until array.length()).map { read(array.getJSONObject(it)) }
@@ -130,7 +130,7 @@ object BackupJson {
         val presets = presetCategories().associateBy { it.id }
         data.categories.forEach { c ->
             require(c.name.isNotBlank() && c.kind in listOf("income", "expense")) { "分类名称或类型无效" }
-            require(c.kind != "income" || c.id == "income") { "收入分类无效" }
+            require(c.kind != "income" || (c.parentId == null && presets[c.id]?.kind == "income")) { "收入分类无效" }
             if (c.parentId != null) require(c.kind == "expense" && categories[c.parentId]?.let { it.kind == "expense" && it.parentId == null } == true) { "分类层级或引用无效" }
             presets[c.id]?.let { preset -> require(c.parentId == preset.parentId && c.kind == preset.kind) { "预设分类结构不兼容" } }
         }

@@ -270,7 +270,7 @@ fun LedgerScreen(
                     items(eventRows, key = { it.entry.id }) { row -> EntryCard(row) { startEntry(row) } }
                 }
                 2 -> {
-                    item { StatisticsPanel(state.rows, state.categories) }
+                    item { StatisticsPanel(state.rows, state.categories, state.events) }
                 }
             }
         }

@@ -5,6 +5,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class StatisticsTest {
+    @Test fun eventScopeFiltersEveryAggregateAndKeepsUnlinkedIncome() {
+        val rows = listOf(row("trip", "2026-10-01", 300),
+            row("other", "2026-10-01", 200).let { it.copy(entry = it.entry.copy(eventId = "other")) },
+            row("home", "2026-10-01", 100).let { it.copy(entry = it.entry.copy(eventId = null)) },
+            row("pay", "2026-10-01", 900, "income.tutoring", "income").let { it.copy(entry = it.entry.copy(eventId = null)) })
+        val only = statisticsEventRows(rows, "only", "trip")
+        val excluded = statisticsEventRows(rows, "exclude", "trip")
+        assertEquals(IncomeExpense(0, 300), incomeExpense(only))
+        assertEquals(IncomeExpense(900, 300), incomeExpense(excluded))
+        assertEquals(300L, categoryShares(excluded, presetCategories(), "expense").sumOf { it.amount })
+        assertEquals("income.tutoring", categoryShares(excluded, presetCategories(), "income").single().id)
+        for (period in StatPeriod.entries) {
+            assertEquals(300L, trendBuckets(excluded, LocalDate.parse("2026-10-01"), period).sumOf { it.totals.expense })
+        }
+        assertEquals(rows, statisticsEventRows(rows, "all", "trip"))
+        assertEquals(rows, statisticsEventRows(rows, "exclude", null))
+        assertTrue(statisticsEventRows(rows, "only", "missing").isEmpty())
+    }
     private fun row(id: String, date: String, amount: Long, category: String = "food.lunch", kind: String = "expense") =
         LedgerRow(LedgerEntry(id, kind, 999999, "NOK", amount, category, "trip", date, ""), "午餐", "饮食", "旅行")
 
@@ -79,7 +97,7 @@ class StatisticsTest {
         assertEquals(all.size, all.map { it.id }.toSet().size)
         val parents = all.filter { it.parentId == null && it.kind == "expense" }.map { it.id }.toSet()
         assertTrue(all.filter { it.parentId != null }.all { it.parentId in parents })
-        assertEquals(listOf("income"), all.filter { it.kind == "income" }.map { it.id })
+        assertEquals(setOf("income", "income.living", "income.tutoring", "income.cashback", "income.salary", "income.gift"), all.filter { it.kind == "income" }.map { it.id }.toSet())
         val ids = all.map { it.id }
         assertTrue(ids.containsAll(listOf("food.late", "food.alcohol", "daily.stationery", "daily.tools", "daily.books",
             "routine.bath", "routine.phone", "routine.data", "routine.delivery", "routine.subscription", "transport.subway", "transport.bus", "photo.processing")))

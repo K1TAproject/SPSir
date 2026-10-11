@@ -240,6 +240,10 @@ fun presetCategories(): List<Category> = buildList {
     add(Category("food.snacks", "零食水果（原分类）", "food", sortOrder = 98))
     add(Category("transport.transit", "公交地铁（原分类）", "transport", sortOrder = 398))
     add(Category("income", "收入", kind = "income", sortOrder = 2000))
+    listOf("living" to "生活费", "tutoring" to "家教费", "cashback" to "返现",
+        "salary" to "工资奖金", "gift" to "红包礼金").forEachIndexed { index, (id, name) ->
+        add(Category("income.$id", name, kind = "income", sortOrder = 2001 + index))
+    }
 }
 
 val legacyCategoryIds = setOf("food.snacks", "transport.transit")

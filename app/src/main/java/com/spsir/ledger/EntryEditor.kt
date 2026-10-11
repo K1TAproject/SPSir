@@ -67,6 +67,7 @@ fun EntryEditor(initial: EntryDraft, editing: Boolean, state: LedgerState, dismi
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     listOf("expense" to "支出", "income" to "收入").forEach { (key, label) ->
                         FilterChip(selected = kind == key, enabled = canEdit, onClick = {
+                            if (kind == key) return@FilterChip
                             kind = key; categoryId = if (key == "income") "income" else defaultCategory
                             if (key == "income") eventId = null
                         }, label = { Text(label) })
@@ -76,6 +77,10 @@ fun EntryEditor(initial: EntryDraft, editing: Boolean, state: LedgerState, dismi
                 ChoiceField("币种", "$currency · ${MoneyCurrency.valueOf(currency).label}", MoneyCurrency.entries.map { it.name to "${it.name} · ${it.label}" }, canEdit) { currency = it }
                 if (currency != "CNY") {
                     OutlinedTextField(rmb, { rmb = it }, label = { Text("人民币金额") }, modifier = Modifier.fillMaxWidth(), textStyle = MaterialTheme.typography.headlineSmall, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, enabled = canEdit)
+                }
+                if (kind == "income") {
+                    ChoiceField("收入分类", category?.name ?: "请选择", state.categories.filter { it.kind == "income" }
+                        .map { it.id to it.name }, canEdit) { categoryId = it }
                 }
                 if (kind == "expense") {
                     OutlinedButton(enabled = canEdit, onClick = { selectingCategory = true }, modifier = Modifier.fillMaxWidth()) {

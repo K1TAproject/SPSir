@@ -24,18 +24,36 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 
 @Composable
-fun StatisticsPanel(rows: List<LedgerRow>, categories: List<Category>) {
+fun StatisticsPanel(rows: List<LedgerRow>, categories: List<Category>, events: List<LedgerEvent> = emptyList()) {
+    var eventMode by rememberSaveable { mutableStateOf("all") }
+    var eventId by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedEvent = events.find { it.id == eventId }
     var periodName by rememberSaveable { mutableStateOf(StatPeriod.MONTH.name) }
     var anchorText by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var pickingDate by rememberSaveable { mutableStateOf(false) }
     val period = StatPeriod.valueOf(periodName)
     val anchor = LocalDate.parse(anchorText)
     val range = statRange(anchor, period)
-    val selectedRows = remember(rows, range) { rows.filter { range.contains(it.entry.occurredOn) } }
+    val selectedRows = remember(rows, range, eventMode, selectedEvent) {
+        statisticsEventRows(rows, eventMode, selectedEvent?.id).filter { range.contains(it.entry.occurredOn) }
+    }
     val totals = remember(selectedRows) { incomeExpense(selectedRows) }
     val buckets = remember(selectedRows, range, period) { trendBuckets(selectedRows, anchor, period) }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (events.isNotEmpty()) {
+            ChoiceField("统计范围", when { selectedEvent == null || eventMode == "all" -> "全部事件"
+                eventMode == "only" -> "仅含指定事件"; else -> "排除指定事件" },
+                listOf("all" to "全部事件", "only" to "仅含指定事件", "exclude" to "排除指定事件")) {
+                eventMode = it
+                if (it != "all" && selectedEvent == null) eventId = events.first().id
+            }
+            if (eventMode != "all" && selectedEvent != null) {
+                ChoiceField("选择事件", selectedEvent.name + if (selectedEvent.archived) "（已归档）" else "",
+                    events.map { it.id to (it.name + if (it.archived) "（已归档）" else "") }) { eventId = it }
+                Text("${if (eventMode == "only") "仅含" else "排除"}：${selectedEvent.name}", style = MaterialTheme.typography.bodySmall)
+            }
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatPeriod.entries.forEach { option ->
                 FilterChip(selected = option == period, onClick = { periodName = option.name },

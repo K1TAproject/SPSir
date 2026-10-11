@@ -1,6 +1,6 @@
 # 正式发布与更新
 
-当前版本：0.4.4 / versionCode 9。数据库及完整备份格式不变。
+当前版本：0.4.5 / versionCode 10。数据库版本 4；完整备份格式 4，继续读取旧格式 1～3。
 
 ## 首次切换正式版
 
@@ -24,8 +24,8 @@ keyPassword=实际密码
 1. 修改 `app/build.gradle.kts` 中 `versionName`，递增 `versionCode`。
 2. 完成测试，将对应源码提交、推送（本次开发不自动执行）。
 3. 双击 `build-release.cmd`。缺少签名时脚本停止，不会自动生成替代密钥。
-4. 在 `app/build/outputs/apk/release/` 获取 `SPSir-0.4.4.apk` 和 `update.json`，两者由同一次构建生成。调试包仍用 `build-apk.cmd`，不要将调试包作为正式更新附件。
-5. GitHub 仓库 K1TAproject/SPSir → Releases → Draft a new release。标签必须是 `v0.4.4`，选择对应源码提交，填写更新说明，上传上述两个文件后一起发布。
+4. 在 `app/build/outputs/apk/release/` 获取 `SPSir-0.4.5.apk` 和 `update.json`，两者由同一次构建生成。调试包仍用 `build-apk.cmd`，不要将调试包作为正式更新附件。
+5. GitHub 仓库 K1TAproject/SPSir → Releases → Draft a new release。标签必须是 `v0.4.5`，选择对应源码提交，填写更新说明，上传上述两个文件后一起发布。
 6. 正式更新不要勾选 Pre-release，将发布设为 Latest。先用草稿准备完整附件，避免用户读到缺少元数据的版本。不要手动改写 update.json 版本或复用另一版 APK。
 
 脚本只生成本地文件，不提交、推送或发布。发布包禁用调试；未为减小体积而扩大混淆或依赖升级范围。
