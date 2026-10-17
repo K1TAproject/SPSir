@@ -27,8 +27,24 @@ fun visibleExpenseCategories(state: LedgerState): List<Category> = state.categor
         it.id !in state.hiddenCategories && it.parentId !in state.hiddenCategories
 }
 
+/**
+ * 最近使用按记账笔数排序：先比次数多的，次数相同再比最近一次记账日期新的，
+ * 仍相同则按预设分类顺序，保证列表稳定。隐藏分类和旧分类不进入候选。
+ */
 fun recentCategories(state: LedgerState): List<Category> {
     val visible = visibleExpenseCategories(state).associateBy { it.id }
-    return state.rows.asSequence().filter { it.entry.kind == "expense" }.sortedByDescending { it.entry.occurredOn }
-        .mapNotNull { visible[it.entry.categoryId] }.distinctBy { it.id }.take(6).toList()
+    val counts = HashMap<String, Int>()
+    val lastUsed = HashMap<String, String>()
+    state.rows.forEach { row ->
+        val entry = row.entry
+        if (entry.kind != "expense" || entry.categoryId !in visible) return@forEach
+        counts[entry.categoryId] = (counts[entry.categoryId] ?: 0) + 1
+        val seen = lastUsed[entry.categoryId]
+        if (seen == null || entry.occurredOn > seen) lastUsed[entry.categoryId] = entry.occurredOn
+    }
+    return counts.keys.sortedWith(
+        compareByDescending<String> { counts[it] }
+            .thenByDescending { lastUsed[it].orEmpty() }
+            .thenBy { visible.getValue(it).sortOrder },
+    ).take(6).mapNotNull { visible[it] }
 }

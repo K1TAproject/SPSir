@@ -1,4 +1,7 @@
 . "$PSScriptRoot\Environment.ps1"
+. "$PSScriptRoot\VersionDocs.ps1"
+$docVersion = (Get-DeclaredVersion -Root $ProjectRoot).Version
+Assert-VersionDocs -Version $docVersion -Root $ProjectRoot
 if (-not (Test-Path -LiteralPath "$ProjectRoot\.local\release-signing.properties")) {
     throw 'Release signing is missing. Restore your existing key and .local/release-signing.properties. See docs/RELEASE.md.'
 }
@@ -9,6 +12,7 @@ $metadata = Get-Content -LiteralPath (Join-Path $output 'output-metadata.json') 
 $element = $metadata.elements[0]
 $version = $element.versionName
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a stable x.y.z version.' }
+if ($version -ne $docVersion) { throw "Build version $version does not match app/build.gradle.kts ($docVersion)." }
 $apk = Join-Path $output $element.outputFile
 & "$env:ANDROID_HOME\build-tools\35.0.0\apksigner.bat" verify $apk
 if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed.' }
@@ -26,3 +30,4 @@ $update = [ordered]@{
 [IO.File]::WriteAllText((Join-Path $output 'update.json'), ($update | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 Write-Host "Release APK: $destination"
 Write-Host "Upload this APK and $output\update.json together to GitHub Release v$version."
+Write-Host "Release notes: docs/RELEASE-NOTES-$version.md"

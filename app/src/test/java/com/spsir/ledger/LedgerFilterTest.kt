@@ -28,4 +28,37 @@ class LedgerFilterTest {
         assertEquals(1, filterRows(rows, categories, LedgerFilter(categoryId = "photo")).size)
         assertEquals(listOf("food.lunch", "photo.film"), recentCategories(state.copy(hiddenCategories = emptySet())).map { it.id })
     }
+
+    @Test fun recentChoicesRankByUsageCountNotByLatestDate() {
+        val rows = listOf(
+            row("a", "2026-01-05", "photo.film"),
+            row("b", "2026-02-05", "photo.film"),
+            row("c", "2026-03-05", "photo.film"),
+            row("d", "2026-10-09", "food.dinner"),
+            row("e", "2026-10-08", "food.breakfast"),
+            row("f", "2026-10-07", "food.breakfast"),
+        )
+        val state = LedgerState(categories = categories, rows = rows)
+        // 3 次 > 2 次 > 1 次；次数相同再比最近一次记账日期。
+        assertEquals(listOf("photo.film", "food.breakfast", "food.dinner"), recentCategories(state).map { it.id })
+    }
+
+    @Test fun recentChoicesKeepSixVisibleExpenseCategoriesAndIgnoreIncome() {
+        val rows = listOf(
+            row("a", "2026-10-01", "food.breakfast"),
+            row("b", "2026-10-02", "food.lunch"),
+            row("c", "2026-10-03", "food.dinner"),
+            row("d", "2026-10-04", "photo.film"),
+            row("e", "2026-10-05", "photo.care"),
+            row("f", "2026-10-06", "photo.gear"),
+            row("g", "2026-10-07", "daily.books"),
+            row("h", "2026-10-08", "income", kind = "income"),
+            row("i", "2026-10-09", "food.snacks"),
+        )
+        val state = LedgerState(categories = categories, rows = rows)
+        // 收入与旧分类不参与；同等次数下保留最近记账的 6 项。
+        val expected = listOf("daily.books", "photo.gear", "photo.care", "photo.film", "food.dinner", "food.lunch")
+        assertEquals(expected, recentCategories(state).map { it.id })
+        assertEquals(expected, recentCategories(state.copy(rows = rows.reversed())).map { it.id })
+    }
 }

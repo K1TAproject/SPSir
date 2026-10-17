@@ -1,4 +1,4 @@
-# SPSir · Android 0.4.5
+# SPSir · Android 0.4.6
 
 个人手动记账原型。Kotlin + Jetpack Compose + Room / SQLite，最低 Android 8.0（API 26）。
 
@@ -18,7 +18,7 @@
 - 周度按周一至周日；支持前后切换、指定日期、回到当前周期。点击柱形可查看金额，也可展开各时间段明细。
 - Compose 预览及界面测试使用示例数据，实际账本初始为空。
 
-- 金额优先录入，日历选择日期；支出分类面板提供大类／细类及最近 6 个分类（按记账日期排序）。
+- 金额优先录入，日历选择日期；支出分类面板提供大类／细类，以及「最近使用」的 6 个常用分类（按记账笔数排序，次数相同再比最近使用）。
 - 「工具」中可隐藏／恢复预设分类；历史流水、编辑和统计不受影响。
 - 「搜索与筛选」支持跨月备注搜索及日期、收支、类别、事件组合条件；流水按日期分组并显示结果内每日支出。
 - 「工具」中可导出完整 JSON 备份、校验并恢复文件；覆盖前保留应用内旧账本副本，失败回滚。
@@ -29,7 +29,7 @@
 
 当前为本地单人版本，建议定期将备份导出到应用之外。不含多设备协作、退款、预算、账户余额和自动录入。
 
-统计页支持仅含或排除一个具体事件，汇总、趋势与分类占比使用同一范围。详见 [0.4.5 说明](docs/BUILD-0.4.5.md)。
+统计页支持仅含或排除一个具体事件，汇总、趋势与分类占比使用同一范围；「记一笔」的「最近使用」按使用次数取前 6 项。详见 [0.4.6 说明](docs/BUILD-0.4.6.md)。
 
 ## 使用入口
 
@@ -46,11 +46,11 @@
 
 本版开发需求见 [0.4 需求](docs/REQUIREMENTS-0.4.md)，功能验证见 [0.4 验证记录](docs/BUILD-0.4.md)，名称更新见 [0.4.1 验证记录](docs/BUILD-0.4.1.md)。稳定性与性能优化见 [0.4.2 验证记录](docs/BUILD-0.4.2.md)。0.4.3 的转账、归档、分享验证见 [0.4.3 验证记录](docs/BUILD-0.4.3.md)。历史版本记录仍保留。
 
-正式发布：双击 `build-release.cmd` 生成独立签名的 APK 与 `update.json`，步骤和首次签名迁移见 [正式发布与更新](docs/RELEASE.md)。工具页支持启动检查开关及手动检查更新；下载由浏览器处理。
+正式发布：双击 `build-release.cmd` 生成独立签名的 APK 与 `update.json`，步骤和首次签名迁移见 [正式发布与更新](docs/RELEASE.md)。每次升版本必须同步更新本文件与 `docs/RELEASE-NOTES-<版本>.md`，两个打包脚本都会先校验，缺失时停止。工具页支持启动检查开关及手动检查更新；下载由浏览器处理。
 
 ## 电脑上预览与调试
 
-手机试用包：双击根目录 `build-apk.cmd`，生成 `app/build/outputs/apk/debug/SPSir-<版本号>.apk`（当前为 `SPSir-0.4.5.apk`）。版本号自动读取构建结果。手机安装、备份迁移及更新方式见 [生成与安装 APK](docs/INSTALL-ANDROID.md)。
+手机试用包：双击根目录 `build-apk.cmd`，生成 `app/build/outputs/apk/debug/SPSir-<版本号>.apk`（当前为 `SPSir-0.4.6.apk`）。版本号自动读取构建结果。手机安装、备份迁移及更新方式见 [生成与安装 APK](docs/INSTALL-ANDROID.md)。
 
 ### Android Studio 的 Compose Preview（不生成安装包）
 
@@ -90,6 +90,7 @@ https://developer.android.com/studio/run/emulator-acceleration
 - 此电脑已安装 Google AEHD 2.2 模拟器加速驱动；这是独立的 Windows 驱动服务，不随项目目录移动。
 - 开发脚本优先读取 `.local/java-home.txt`，没有该文件时使用 Android Studio 内置 JBR 或 `JAVA_HOME`。
 - `local.properties`、`.tools`、`.local` 和构建产物不提交到版本管理。
+- `.gitignore` 已覆盖 SDK、Gradle 缓存、签名、APK、数据库和系统临时文件，`git add .` 只会添加源码与文档；`.serena` 等工具配置也不入库。
 - 模拟器端口固定为 5580，只向名为 `SPSir_API35` 的虚拟设备安装。
 
 历史验证记录：[0.2 版本](docs/BUILD-0.2.md)、[第一版](docs/BUILD.md)。
@@ -123,7 +124,7 @@ https://developer.android.com/studio/run/emulator-acceleration
 - `Statistics.kt`：自然周期范围、人民币收支汇总、趋势分组与分类占比。
 - `StatisticsUi.kt`：周期选择、收支图表与类别下钻。
 - `Backup.kt`：完整 JSON 备份、严格字段校验、覆盖前副本及事务恢复。
-- `LedgerFilter.kt`：组合筛选与可见／最近分类。
+- `LedgerFilter.kt`：组合筛选、可见分类与按记账次数排序的「最近使用」分类。
 - `LedgerToolsUi.kt`：备份入口、日期选择、分类选择和管理、搜索筛选表单。
 - `app/schemas`：Room 导出的数据库版本结构；未来升级应编写迁移，不清库重建。
 

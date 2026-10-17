@@ -1,6 +1,6 @@
 # 正式发布与更新
 
-当前版本：0.4.5 / versionCode 10。数据库版本 4；完整备份格式 4，继续读取旧格式 1～3。
+当前版本：0.4.6 / versionCode 11。数据库版本 4；完整备份格式 4，继续读取旧格式 1～3。
 
 ## 首次切换正式版
 
@@ -19,16 +19,41 @@ keyAlias=spsir
 keyPassword=实际密码
 ```
 
+## 版本更新流程（每次发版都执行）
+
+1. 修改 `app/build.gradle.kts`：`versionName` 升位，`versionCode` 加 1。
+2. 更新 `README.md`：首行版本号、功能说明，以及当前调试包 `SPSir-<版本>.apk`。
+3. 新建 `docs/RELEASE-NOTES-<版本>.md`：面向用户的更新说明（改动、兼容性、安装方式），发布时作为 Release 正文。
+4. 新建 `docs/BUILD-<版本>.md`：单元测试、设备测试、Lint、签名证书与 APK SHA-256 等验证记录。
+5. 更新本文件与 `docs/INSTALL-ANDROID.md` 中的“当前版本”。
+6. 运行 `.\scripts\Check.ps1`，确认单元测试和 Lint 通过。
+7. 双击 `build-apk.cmd`（调试试用包）或 `build-release.cmd`（正式包）。两个脚本都会先检查 README 与 `docs/RELEASE-NOTES-<版本>.md`：版本号不一致或更新说明缺失时直接停止，不生成安装包；`docs/BUILD-<版本>.md`、`RELEASE.md`、`INSTALL-ANDROID.md` 未同步时给出警告。
+8. 提交并推送源码，再按下文发布 Release。
+
 ## 构建与发布
 
-1. 修改 `app/build.gradle.kts` 中 `versionName`，递增 `versionCode`。
-2. 完成测试，将对应源码提交、推送（本次开发不自动执行）。
-3. 双击 `build-release.cmd`。缺少签名时脚本停止，不会自动生成替代密钥。
-4. 在 `app/build/outputs/apk/release/` 获取 `SPSir-0.4.5.apk` 和 `update.json`，两者由同一次构建生成。调试包仍用 `build-apk.cmd`，不要将调试包作为正式更新附件。
-5. GitHub 仓库 K1TAproject/SPSir → Releases → Draft a new release。标签必须是 `v0.4.5`，选择对应源码提交，填写更新说明，上传上述两个文件后一起发布。
-6. 正式更新不要勾选 Pre-release，将发布设为 Latest。先用草稿准备完整附件，避免用户读到缺少元数据的版本。不要手动改写 update.json 版本或复用另一版 APK。
+- 正式包：双击 `build-release.cmd`，在 `app/build/outputs/apk/release/` 得到 `SPSir-0.4.6.apk` 和同次构建的 `update.json`。缺少签名时脚本停止，不会自动生成替代密钥。
+- 调试包：双击 `build-apk.cmd`，在 `app/build/outputs/apk/debug/` 得到 `SPSir-0.4.6.apk`。调试包不作为正式更新附件。
 
 脚本只生成本地文件，不提交、推送或发布。发布包禁用调试；未为减小体积而扩大混淆或依赖升级范围。
+
+## 在 GitHub 发布 Release
+
+1. 先提交并推送源码：`git add .` → `git commit -m "v0.4.6: ..."` → `git push`。`git push` 不会推送标签，标签由下一步的 Release 创建（也可先在本地 `git tag -a v0.4.6 -m "SPSir 0.4.6"` 后 `git push origin v0.4.6`，再在网页选择该标签）。
+2. 打开仓库 K1TAproject/SPSir → **Releases → Draft a new release**。
+3. **Tag** 填 `v0.4.6`，Target 选 `main` 上最新的源码提交。标签必须严格等于 `v` + `versionName`：应用只读取 `releases/latest`，并要求 `tag_name == v0.4.6`。
+4. **Title** 填 `SPSir 0.4.6`；正文粘贴 `docs/RELEASE-NOTES-0.4.6.md` 的内容，应用用它显示更新说明。
+5. 上传两个附件，缺一不可，且必须来自同一次 `build-release.cmd`：`SPSir-0.4.6.apk` 与 `update.json`。应用会校验应用 ID、versionCode、版本号、标签、APK 附件名、下载地址和 SHA-256，文件名或哈希不一致会静默失败，只在手动检查时提示失败。
+6. 不要勾选 Pre-release；勾选“Set as the latest release”，然后发布。
+7. 验证：打开 `https://api.github.com/repos/K1TAproject/SPSir/releases/latest`，确认 `tag_name` 为 `v0.4.6`、`assets` 同时含 APK 和 `update.json`；在装有 0.4.5 正式版的手机上于工具页手动检查更新，应提示 0.4.6 并能打开下载页。
+8. 发布后不要删除或改名标签：旧版本用它拼接下载地址。后续版本必须递增 versionCode 并使用新标签。
+
+已安装 GitHub CLI 时，可用一条命令代替第 2～6 步（命令会自行创建标签，不要再重复用网页面板发布同一版本）：
+
+```powershell
+gh release create v0.4.6 --title "SPSir 0.4.6" --notes-file docs/RELEASE-NOTES-0.4.6.md --latest `
+  app/build/outputs/apk/release/SPSir-0.4.6.apk app/build/outputs/apk/release/update.json
+```
 
 ## 更新行为
 
