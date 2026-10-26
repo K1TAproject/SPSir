@@ -1,6 +1,6 @@
 # 正式发布与更新
 
-当前版本：0.4.6 / versionCode 11。数据库版本 4；完整备份格式 4，继续读取旧格式 1～3。
+当前版本：0.4.7 / versionCode 12。数据库版本 4；完整备份格式 4，继续读取旧格式 1～3。
 
 ## 首次切换正式版
 
@@ -32,27 +32,27 @@ keyPassword=实际密码
 
 ## 构建与发布
 
-- 正式包：双击 `build-release.cmd`，在 `app/build/outputs/apk/release/` 得到 `SPSir-0.4.6.apk` 和同次构建的 `update.json`。缺少签名时脚本停止，不会自动生成替代密钥。
-- 调试包：双击 `build-apk.cmd`，在 `app/build/outputs/apk/debug/` 得到 `SPSir-0.4.6.apk`。调试包不作为正式更新附件。
+- 正式包：双击 `build-release.cmd`，在 `app/build/outputs/apk/release/` 得到 `SPSir-0.4.7.apk` 和同次构建的 `update.json`。缺少签名时脚本停止，不会自动生成替代密钥。
+- 调试包：双击 `build-apk.cmd`，在 `app/build/outputs/apk/debug/` 得到 `SPSir-0.4.7.apk`。调试包不作为正式更新附件。
 
 脚本只生成本地文件，不提交、推送或发布。发布包禁用调试；未为减小体积而扩大混淆或依赖升级范围。
 
 ## 在 GitHub 发布 Release
 
-1. 先提交并推送源码：`git add .` → `git commit -m "v0.4.6: ..."` → `git push`。`git push` 不会推送标签，标签由下一步的 Release 创建（也可先在本地 `git tag -a v0.4.6 -m "SPSir 0.4.6"` 后 `git push origin v0.4.6`，再在网页选择该标签）。
+1. 先提交并推送源码：`git add .` → `git commit -m "v0.4.7: ..."` → `git push`。`git push` 不会推送标签，标签由下一步的 Release 创建（也可先在本地 `git tag -a v0.4.7 -m "SPSir 0.4.7"` 后 `git push origin v0.4.7`，再在网页选择该标签）。
 2. 打开仓库 K1TAproject/SPSir → **Releases → Draft a new release**。
-3. **Tag** 填 `v0.4.6`，Target 选 `main` 上最新的源码提交。标签必须严格等于 `v` + `versionName`：应用只读取 `releases/latest`，并要求 `tag_name == v0.4.6`。
-4. **Title** 填 `SPSir 0.4.6`；正文粘贴 `docs/RELEASE-NOTES-0.4.6.md` 的内容，应用用它显示更新说明。
-5. 上传两个附件，缺一不可，且必须来自同一次 `build-release.cmd`：`SPSir-0.4.6.apk` 与 `update.json`。应用会校验应用 ID、versionCode、版本号、标签、APK 附件名、下载地址和 SHA-256，文件名或哈希不一致会静默失败，只在手动检查时提示失败。
+3. **Tag** 填 `v0.4.7`，Target 选 `main` 上最新的源码提交。标签必须严格等于 `v` + `versionName`：应用只读取 `releases/latest`，并要求 `tag_name == v0.4.7`。
+4. **Title** 填 `SPSir 0.4.7`；正文粘贴 `docs/RELEASE-NOTES-0.4.7.md` 的内容，应用用它显示更新说明。
+5. 上传两个附件，缺一不可，且必须来自同一次 `build-release.cmd`：`SPSir-0.4.7.apk` 与 `update.json`。应用会校验应用 ID、versionCode、版本号、标签、APK 附件名、下载地址和 SHA-256，文件名或哈希不一致会静默失败，只在手动检查时提示失败。
 6. 不要勾选 Pre-release；勾选“Set as the latest release”，然后发布。
-7. 验证：打开 `https://api.github.com/repos/K1TAproject/SPSir/releases/latest`，确认 `tag_name` 为 `v0.4.6`、`assets` 同时含 APK 和 `update.json`；在装有 0.4.5 正式版的手机上于工具页手动检查更新，应提示 0.4.6 并能打开下载页。
+7. 验证：打开 `https://api.github.com/repos/K1TAproject/SPSir/releases/latest`，确认 `tag_name` 为 `v0.4.7`、`assets` 同时含 APK 和 `update.json`；在装有 0.4.5 正式版的手机上于工具页手动检查更新，应提示 0.4.7 并能打开下载页。
 8. 发布后不要删除或改名标签：旧版本用它拼接下载地址。后续版本必须递增 versionCode 并使用新标签。
 
 已安装 GitHub CLI 时，可用一条命令代替第 2～6 步（命令会自行创建标签，不要再重复用网页面板发布同一版本）：
 
 ```powershell
-gh release create v0.4.6 --title "SPSir 0.4.6" --notes-file docs/RELEASE-NOTES-0.4.6.md --latest `
-  app/build/outputs/apk/release/SPSir-0.4.6.apk app/build/outputs/apk/release/update.json
+gh release create v0.4.7 --title "SPSir 0.4.7" --notes-file docs/RELEASE-NOTES-0.4.7.md --latest `
+  app/build/outputs/apk/release/SPSir-0.4.7.apk app/build/outputs/apk/release/update.json
 ```
 
 ## 更新行为

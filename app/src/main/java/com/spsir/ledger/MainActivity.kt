@@ -18,6 +18,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.tooling.preview.Preview
@@ -44,7 +46,7 @@ class MainActivity : ComponentActivity() {
                 LedgerScreen(state, vm::save, vm::createEvent, vm::delete, vm::clearError, vm::setCategoryHidden,
                     createPublic = vm::createPublic, savePublic = vm::savePublic, deletePublic = vm::deletePublic,
                     saveMember = vm::saveMember, deleteMember = vm::deleteMember, renameEvent = vm::renameEvent, archiveEvent = vm::archiveEvent,
-                    saveTransfer = vm::saveTransfer, deleteTransfer = vm::deleteTransfer, backupTools = {
+                    saveTransfer = vm::saveTransfer, deleteTransfer = vm::deleteTransfer, onScopeChange = vm::setStatisticsScope, backupTools = {
                         BackupTools(state, vm)
                         UpdateTools(updateState, updates::automatic) { updates.check(manual = true) }
                     })
@@ -73,7 +75,10 @@ fun LedgerScreen(
     archiveEvent: (String, Boolean, Boolean, () -> Unit) -> Unit = { _, _, _, done -> done() },
     saveTransfer: (TransferDraft, Boolean, () -> Unit) -> Unit = { _, _, done -> done() },
     deleteTransfer: (String, String, () -> Unit) -> Unit = { _, _, done -> done() },
+    onScopeChange: (StatisticsScope) -> Unit = {},
 ) {
+    var scopeOpen by rememberSaveable { mutableStateOf(false) }
+    val scope = state.statisticsScope
     var showArchived by rememberSaveable { mutableStateOf(false) }
     var eventMenu by remember { mutableStateOf(false) }
     var renaming by rememberSaveable { mutableStateOf(false) }
@@ -120,6 +125,9 @@ fun LedgerScreen(
     val listedEvents = state.events.filter { it.archived == showArchived }
     val monthRows = remember(state.rows, month) { state.rows.filter { it.entry.occurredOn.startsWith(month) } }
     val displayRows = remember(state.rows, state.categories, filtering, filter, monthRows) { if (filtering) filterRows(state.rows, state.categories, filter) else monthRows }
+    val monthStatisticsRows = remember(monthRows, scope) { statisticsEventRows(monthRows, scope.mode, scope.eventId) }
+    val displayStatisticsRows = remember(displayRows, scope) { statisticsEventRows(displayRows, scope.mode, scope.eventId) }
+    val countedIds = remember(displayStatisticsRows) { displayStatisticsRows.map { it.entry.id }.toSet() }
     val rowsByEvent = remember(state.rows) { state.rows.groupBy { it.entry.eventId } }
     val eventRows = if (selectedEvent == null) emptyList() else rowsByEvent[selectedEvent].orEmpty()
     val publicBalances = remember(state.publicEvents) { state.publicEvents.associate { it.event.eventId to it.balances() } }
@@ -194,7 +202,7 @@ fun LedgerScreen(
                 item { HorizontalDivider() }
                 item { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { CategoryManager(state, setCategoryHidden) } }
             }
-            if (!toolsOpen && tab == 0 && !filtering) {
+            if (!toolsOpen && tab == 0) {
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         TextButton(onClick = { month = YearMonth.parse(month).minusMonths(1).toString() }) { Text("上月") }
@@ -202,7 +210,8 @@ fun LedgerScreen(
                         TextButton(onClick = { month = YearMonth.parse(month).plusMonths(1).toString() }) { Text("下月") }
                     }
                 }
-                item { TotalCard(monthRows, "本月支出") }
+                item { StatisticsScopeControl(scope, state.events, !state.loading && !state.saving) { scopeOpen = true } }
+                item { TotalCard(monthStatisticsRows, "本月支出", statistics = true) }
             }
             if (!toolsOpen) when (tab) {
                 0 -> {
@@ -221,12 +230,16 @@ fun LedgerScreen(
                             state.categories.find { it.id == filter.categoryId }?.name,
                             if (filter.eventId == "none") "无事件" else state.events.find { it.id == filter.eventId }?.name,
                         ).joinToString(" · ").ifEmpty { "全部流水" }, style = MaterialTheme.typography.bodySmall) }
-                        item { TotalCard(displayRows, "筛选结果支出") }
+                        item { TotalCard(displayStatisticsRows, "筛选结果支出", statistics = true) }
+                        if (displayRows.isNotEmpty() && displayStatisticsRows.isEmpty()) item {
+                            Text("当前结果未计入统计，可调整统计范围。", style = MaterialTheme.typography.bodySmall)
+                        }
                     } else item { Text("本月流水 · ${displayRows.size} 笔", style = MaterialTheme.typography.titleMedium) }
                     if (displayRows.isEmpty()) item { EmptyText(if (filtering) "无匹配流水" else "本月暂无流水") }
                     dailyRows.forEach { (date, rows) ->
-                        item(key = "date-$date") { Text("$date · ${if (filtering) "筛选内" else "当日"}支出 ¥ ${Money.format(expenseTotal(rows))}", style = MaterialTheme.typography.labelLarge) }
-                        items(rows, key = { "entry-${it.entry.id}" }) { row -> EntryCard(row) { startEntry(row) } }
+                        item(key = "date-$date") { Text("$date · ${if (scope.mode != "all") "当日统计" else if (filtering) "筛选内" else "当日"}支出 ¥ ${Money.format(expenseTotal(rows.filter { it.entry.id in countedIds }))}",
+                            style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("daily-$date")) }
+                        items(rows, key = { "entry-${it.entry.id}" }) { row -> EntryCard(row, row.entry.id !in countedIds) { startEntry(row) } }
                     }
                 }
                 1 -> if (event == null) {
@@ -270,11 +283,16 @@ fun LedgerScreen(
                     items(eventRows, key = { it.entry.id }) { row -> EntryCard(row) { startEntry(row) } }
                 }
                 2 -> {
-                    item { StatisticsPanel(state.rows, state.categories, state.events) }
+                    item { StatisticsPanel(state.rows, state.categories, scope) {
+                        StatisticsScopeControl(scope, state.events, !state.loading && !state.saving) { scopeOpen = true }
+                    } }
                 }
             }
         }
     }
+
+    if (scopeOpen && !state.loading && !state.saving) StatisticsScopeDialog(scope, state.events,
+        state.publicEvents.map { it.event.eventId }.toSet(), { scopeOpen = false }, { onScopeChange(it); scopeOpen = false })
 
     if (event != null && !state.loading) {
         if (renaming) editorStates.SaveableStateProvider("rename-${event.id}") {
@@ -367,21 +385,25 @@ fun LedgerScreen(
 }
 
 @Composable
-private fun TotalCard(rows: List<LedgerRow>, title: String, showIncome: Boolean = true) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)) {
+private fun TotalCard(rows: List<LedgerRow>, title: String, showIncome: Boolean = true, statistics: Boolean = false) {
+    Card(Modifier.fillMaxWidth().testTag("total-$title").semantics(mergeDescendants = true) {}, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.8f))
             Text("¥ ${Money.format(expenseTotal(rows))}", style = MaterialTheme.typography.headlineLarge)
             HorizontalDivider(color = Color.White.copy(alpha = 0.18f), modifier = Modifier.padding(vertical = 4.dp))
             if (showIncome) Text("收入 ¥ ${Money.format(rows.filter { it.entry.kind == "income" }.sumOf { it.entry.rmbMinor })}")
+            if (statistics) {
+                Text("收支差额 ¥ ${Money.format(incomeExpense(rows).net)}")
+                Text("计入统计 ${rows.size} 笔", style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
 
 @Composable
-private fun EntryCard(row: LedgerRow, onClick: () -> Unit) {
+private fun EntryCard(row: LedgerRow, excluded: Boolean = false, onClick: () -> Unit) {
     val entry = row.entry
-    OutlinedCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+    OutlinedCard(modifier = Modifier.fillMaxWidth().testTag("entry-${entry.id}"), onClick = onClick) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(row.categoryName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
@@ -390,6 +412,7 @@ private fun EntryCard(row: LedgerRow, onClick: () -> Unit) {
             Text(listOfNotNull(entry.occurredOn, row.groupName, row.eventName).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (entry.currency != "CNY") Text("原币 ${entry.currency} ${Money.format(entry.originalMinor, MoneyCurrency.valueOf(entry.currency).digits)}", style = MaterialTheme.typography.bodySmall)
             if (entry.note.isNotBlank()) Text(entry.note, style = MaterialTheme.typography.bodyMedium)
+            if (excluded) Text("不计入统计", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

@@ -1,14 +1,14 @@
-# SPSir · Android 0.4.6
+# SPSir · Android 0.4.7
 
 个人手动记账应用：Kotlin + Jetpack Compose + Room / SQLite，支持 Android 8.0（API 26）及以上。单机单人使用，账本只保存在本机。
 
-当前版本 **0.4.6**（versionCode 11）· 数据库版本 4 · 备份格式 4。更新内容见 [0.4.6 说明](docs/RELEASE-NOTES-0.4.6.md)。
+当前版本 **0.4.7**（versionCode 12）· 数据库版本 4 · 备份格式 4。更新内容见 [0.4.7 说明](docs/RELEASE-NOTES-0.4.7.md)。
 
 ## 快速开始
 
 | 目的 | 做法 |
 |---|---|
-| 装到手机试用 | 双击 `build-apk.cmd`，得到 `app/build/outputs/apk/debug/SPSir-0.4.6.apk`，复制到手机安装。详见 [安装 APK](docs/INSTALL-ANDROID.md) |
+| 装到手机试用 | 双击 `build-apk.cmd`，得到 `app/build/outputs/apk/debug/SPSir-0.4.7.apk`，复制到手机安装。详见 [安装 APK](docs/INSTALL-ANDROID.md) |
 | 在电脑上运行 | 双击 `run-debug.cmd`，启动 `SPSir_API35` 模拟器并安装调试包 |
 | 生成正式版 | 双击 `build-release.cmd`，产出签名 APK 与 `update.json`。流程见 [正式发布](docs/RELEASE.md) |
 | 跑测试与 Lint | `.\scripts\Check.ps1` |
@@ -21,7 +21,7 @@
 | 多币种 | CNY、EUR、NOK、SEK、DKK、ISK、USD、GBP、JPY；原币与人民币金额均按最小单位精确保存，人民币交易只输入一次。 |
 | 事件 | 个人事件默认已 AA；公共事件支持同行者、单人付款、参与者均分，公共费用自动写入本人流水；事件可改名、归档（归档仍计入统计）。 |
 | 结算 | 查看应承担、实付、已转出／收到与转账建议；成员间实际转账可分批多次，编辑或删除后重算；可预览或分享 UTF-8 文字账单。 |
-| 统计 | 日／周／月／年收支、趋势柱状图、分类占比与子分类下钻；可按事件「仅含／排除」筛选。 |
+| 统计 | 日／周／月／年收支、趋势柱状图、分类占比与子分类下钻；流水页与统计页共用事件「仅含／排除」范围，确认后记住选择；排除记录仍可查看。 |
 | 查找 | 跨月备注搜索，可组合日期、收支、类别、事件条件。 |
 | 数据 | 隐藏／恢复预设分类；完整 JSON 备份与恢复，覆盖前保留副本。 |
 | 更新 | 启动时检查 GitHub 正式版，可在工具页关闭；下载由浏览器完成。 |
@@ -37,7 +37,7 @@
 | [安装手机试用包](docs/INSTALL-ANDROID.md) | 生成、安装、签名迁移 |
 | [正式发布与更新](docs/RELEASE.md) | 版本流程、GitHub Release、更新校验 |
 | [0.4 需求](docs/REQUIREMENTS-0.4.md) | 本版需求与验收 |
-| [0.4.6 验证记录](docs/BUILD-0.4.6.md) | 测试、Lint、签名与 SHA-256 |
+| [0.4.7 验证记录](docs/BUILD-0.4.7.md) | 测试、Lint、签名与 SHA-256 |
 | 历史记录 | `docs/` 下的 `BUILD-*.md` |
 
 ## 开发

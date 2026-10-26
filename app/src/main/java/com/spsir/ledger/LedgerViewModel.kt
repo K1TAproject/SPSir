@@ -30,6 +30,7 @@ data class LedgerState(
     val backupPreview: LedgerBackup? = null,
     val message: String? = null,
     val publicEvents: List<PublicBundle> = emptyList(),
+    val statisticsScope: StatisticsScope = StatisticsScope(),
 )
 
 data class EntryDraft(
@@ -90,7 +91,8 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     private val eventRepository = EventRepository(db)
     private val repository = LedgerRepository(db.dao())
     private val backups = BackupStore(db, File(application.filesDir, "before-restore.json"))
-    private val mutableState = MutableStateFlow(LedgerState())
+    private val scopePreferences = StatisticsScopePreferences(application.getSharedPreferences("statistics_scope", 0))
+    private val mutableState = MutableStateFlow(LedgerState(statisticsScope = scopePreferences.read()))
     val state = mutableState.asStateFlow()
 
     init {
@@ -100,8 +102,10 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                 db.invalidationTracker.createFlow("categories", "events", "entries", "hidden_categories",
                     "public_events", "event_members", "public_expenses", "expense_members", "event_transfers")
                     .map { db.readLedgerState() }.flowOn(Dispatchers.IO).collect { snapshot ->
+                        val scope = state.value.statisticsScope.resolved(snapshot.events)
+                        if (scope != state.value.statisticsScope) scopePreferences.write(scope)
                         mutableState.update { snapshot.copy(saving = it.saving, error = it.error,
-                            message = it.message, backupPreview = it.backupPreview) }
+                            message = it.message, backupPreview = it.backupPreview, statisticsScope = scope) }
                     }
             } catch (e: CancellationException) {
                 throw e
@@ -124,6 +128,12 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteMember(event: String, id: String) = mutate({}) { publicRepository.deleteMember(event, id) }
 
     fun clearError() = mutableState.update { it.copy(error = null) }
+    fun setStatisticsScope(scope: StatisticsScope) {
+        if (state.value.loading || state.value.saving) return
+        val valid = scope.resolved(state.value.events)
+        scopePreferences.write(valid)
+        mutableState.update { it.copy(statisticsScope = valid) }
+    }
     fun save(draft: EntryDraft, done: () -> Unit) = mutate(done) { db.withTransaction { repository.save(draft) } }
     fun createEvent(name: String, done: () -> Unit) = mutate(done) { repository.createEvent(name) }
     fun delete(id: String, done: () -> Unit) = mutate(done) { db.withTransaction { val source = db.publicDao().fromEntry(id)
@@ -164,7 +174,8 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun restoreBackup() {
         val data = state.value.backupPreview ?: return
-        mutate({ mutableState.update { it.copy(backupPreview = null, message = "账本已恢复") } }, "恢复账本") { backups.restore(data) }
+        mutate({ mutableState.update { it.copy(backupPreview = null, message = "账本已恢复", statisticsScope = StatisticsScope()) } },
+            "恢复账本") { scopePreferences.restore(backups, data) }
     }
 
     private fun mutate(done: () -> Unit, operation: String = "保存更改", action: suspend () -> Unit) {

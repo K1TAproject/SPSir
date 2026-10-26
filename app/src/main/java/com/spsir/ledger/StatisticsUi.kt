@@ -24,36 +24,22 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 
 @Composable
-fun StatisticsPanel(rows: List<LedgerRow>, categories: List<Category>, events: List<LedgerEvent> = emptyList()) {
-    var eventMode by rememberSaveable { mutableStateOf("all") }
-    var eventId by rememberSaveable { mutableStateOf<String?>(null) }
-    val selectedEvent = events.find { it.id == eventId }
+fun StatisticsPanel(rows: List<LedgerRow>, categories: List<Category>, scope: StatisticsScope = StatisticsScope(),
+    scopeControl: @Composable () -> Unit = {}) {
     var periodName by rememberSaveable { mutableStateOf(StatPeriod.MONTH.name) }
     var anchorText by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var pickingDate by rememberSaveable { mutableStateOf(false) }
     val period = StatPeriod.valueOf(periodName)
     val anchor = LocalDate.parse(anchorText)
     val range = statRange(anchor, period)
-    val selectedRows = remember(rows, range, eventMode, selectedEvent) {
-        statisticsEventRows(rows, eventMode, selectedEvent?.id).filter { range.contains(it.entry.occurredOn) }
+    val selectedRows = remember(rows, range, scope) {
+        statisticsEventRows(rows, scope.mode, scope.eventId).filter { range.contains(it.entry.occurredOn) }
     }
     val totals = remember(selectedRows) { incomeExpense(selectedRows) }
     val buckets = remember(selectedRows, range, period) { trendBuckets(selectedRows, anchor, period) }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        if (events.isNotEmpty()) {
-            ChoiceField("统计范围", when { selectedEvent == null || eventMode == "all" -> "全部事件"
-                eventMode == "only" -> "仅含指定事件"; else -> "排除指定事件" },
-                listOf("all" to "全部事件", "only" to "仅含指定事件", "exclude" to "排除指定事件")) {
-                eventMode = it
-                if (it != "all" && selectedEvent == null) eventId = events.first().id
-            }
-            if (eventMode != "all" && selectedEvent != null) {
-                ChoiceField("选择事件", selectedEvent.name + if (selectedEvent.archived) "（已归档）" else "",
-                    events.map { it.id to (it.name + if (it.archived) "（已归档）" else "") }) { eventId = it }
-                Text("${if (eventMode == "only") "仅含" else "排除"}：${selectedEvent.name}", style = MaterialTheme.typography.bodySmall)
-            }
-        }
+        scopeControl()
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatPeriod.entries.forEach { option ->
                 FilterChip(selected = option == period, onClick = { periodName = option.name },
@@ -79,7 +65,7 @@ fun StatisticsPanel(rows: List<LedgerRow>, categories: List<Category>, events: L
                     TotalAmount("收入", totals.income, Modifier.weight(1f).testTag("stat-income"))
                     TotalAmount("收支差额", totals.net, Modifier.weight(1f).testTag("stat-net"))
                 }
-                Text("${selectedRows.size} 笔记录", style = MaterialTheme.typography.bodySmall)
+                Text("计入统计 ${selectedRows.size} 笔", style = MaterialTheme.typography.bodySmall)
             }
         }
         IncomeExpenseChart(buckets, period)

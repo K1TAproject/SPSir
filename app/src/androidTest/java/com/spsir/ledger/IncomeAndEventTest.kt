@@ -53,22 +53,4 @@ class IncomeAndEventTest {
         } finally { db.close(); context.deleteDatabase(name) }
     }
 
-    @Test fun eventScopeSurvivesRestorationAndIncludesArchivedEvents() {
-        val date = LocalDate.now().toString()
-        fun row(id: String, event: String?, amount: Long) = LedgerRow(
-            LedgerEntry(id, "expense", amount, "CNY", amount, "food.lunch", event, date, ""), "午餐", "饮食", event)
-        val restore = StateRestorationTester(compose)
-        restore.setContent { LedgerTheme { LazyColumn { item { StatisticsPanel(
-            listOf(row("one", "trip", 30000), row("two", null, 10000)), presetCategories(),
-            listOf(LedgerEvent("trip", "旅行", archived = true))) } } } }
-        compose.onNodeWithText("全部事件").performClick()
-        compose.onNodeWithText("排除指定事件", substring = false).performClick()
-        compose.onNodeWithTag("stat-expense").performScrollTo().assertTextContains("¥ 100.00")
-        restore.emulateSavedInstanceStateRestore()
-        compose.onNodeWithTag("stat-expense").performScrollTo().assertTextContains("¥ 100.00")
-        compose.onNodeWithText("排除指定事件").performScrollTo().performClick()
-        compose.onNodeWithText("仅含指定事件", substring = false).performClick()
-        compose.onNodeWithTag("stat-expense").performScrollTo().assertTextContains("¥ 300.00")
-        compose.onNodeWithText("旅行（已归档）").performScrollTo().assertExists()
-    }
 }

@@ -73,13 +73,7 @@ fun trendBuckets(rows: List<LedgerRow>, anchor: LocalDate, period: StatPeriod): 
 data class CategoryShare(val id: String, val label: String, val amount: Long)
 
 fun statisticsEventRows(rows: List<LedgerRow>, mode: String, eventId: String?): List<LedgerRow> =
-    if (eventId == null || mode == "all") rows else rows.filter {
-        when (mode) {
-            "only" -> it.entry.eventId == eventId
-            "exclude" -> it.entry.eventId != eventId
-            else -> true
-        }
-    }
+    rows.filter(StatisticsScope(mode, eventId)::includes)
 
 fun categoryShares(rows: List<LedgerRow>, categories: List<Category>, kind: String, parentId: String? = null): List<CategoryShare> {
     val byId = categories.associateBy { it.id }

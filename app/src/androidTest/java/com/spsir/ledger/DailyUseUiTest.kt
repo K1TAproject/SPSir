@@ -25,10 +25,13 @@ class DailyUseUiTest {
         compose.onNodeWithText("备注关键词").performTextInput("胶卷")
         capture("01-search-form")
         compose.onNodeWithText("查找", substring = false).performClick()
-        compose.onNodeWithText("旅行胶卷", substring = false).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("筛选结果 · 1 笔").performScrollTo().assertIsDisplayed()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("旅行胶卷", substring = false))
+        compose.onNodeWithText("旅行胶卷", substring = false).assertIsDisplayed()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("筛选结果 · 1 笔"))
+        compose.onNodeWithText("筛选结果 · 1 笔").assertIsDisplayed()
         capture("02-search-result")
-        compose.onNodeWithText("清除筛选").performScrollTo().performClick()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("清除筛选"))
+        compose.onNodeWithText("清除筛选").performClick()
         compose.onNodeWithText("筛选结果 · 1 笔").assertDoesNotExist()
     }
 
